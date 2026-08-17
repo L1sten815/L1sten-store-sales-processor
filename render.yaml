@@ -1,0 +1,18 @@
+# Render 部署声明（Infra as Code）
+# 用法：Render 控制台 -> New -> Blueprint -> 连 GitHub 仓库 -> 选本仓库即可自动按此文件建服务。
+# 也可在 Dashboard 手动建 Web Service，Build Command 留空（Render 会自动 pip install -r requirements.txt），
+# Start Command 填 `python server.py`。
+services:
+  - type: web
+    name: store-sales-processor
+    runtime: python
+    plan: free            # 免费额度；如需常驻/更大资源可改 standard
+    branch: main          # 你的默认分支名（如 master 改成 master）
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /api/ping
+    envVars: []           # 无需任何环境变量；server.py 自动读 $PORT
+    # 说明：
+    # - 大文件处理走「上传即返回 202 + 前端轮询」，不会触发 Render 的请求超时。
+    # - 临时文件写在服务目录内（部署后清空），属一次性任务数据，无持久化需求。
+    # - 免费版实例空闲后会休眠，首次访问有数秒冷启动；唤醒后正常使用。

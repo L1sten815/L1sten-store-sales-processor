@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>店铺销量数据处理工具</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --line:#e3e8ef; --ink:#1f2733;
+    --sub:#6b7785; --brand:#2f6fed; --brand-soft:#eaf1ff;
+    --ok:#1f9d55; --warn:#d98a00; --bad:#d64545;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;}
+  header{padding:18px 24px;background:var(--card);border-bottom:1px solid var(--line);}
+  header h1{margin:0;font-size:18px;}
+  header p{margin:4px 0 0;color:var(--sub);font-size:13px;}
+  main{padding:20px 24px;max-width:1200px;margin:0 auto;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;}
+  .card h2{margin:0 0 12px;font-size:15px;}
+  .drop{ border:2px dashed var(--line);border-radius:10px;padding:28px;text-align:center;
+    color:var(--sub);cursor:pointer;transition:.15s;background:#fafbfc;}
+  .drop:hover,.drop.over{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);}
+  .drop b{color:var(--ink);}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink);
+    padding:8px 14px;border-radius:8px;transition:.15s;}
+  button:hover{border-color:var(--brand);color:var(--brand);}
+  button.primary{background:var(--brand);border-color:var(--brand);color:#fff;}
+  button.primary:hover{filter:brightness(1.05);color:#fff;}
+  button:disabled{opacity:.5;cursor:not-allowed;}
+  button.big{padding:12px 16px;font-size:14px;font-weight:600;}
+  select,input[type=text],input[type=number]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;}
+  input[type=number]{width:90px;}
+  label{font-size:13px;color:var(--sub);}
+  .meta{color:var(--sub);font-size:13px;margin:8px 0;}
+  .meta b{color:var(--ink);}
+  .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:8px;max-height:420px;}
+  table{border-collapse:collapse;width:100%;font-size:13px;}
+  th,td{border-bottom:1px solid var(--line);padding:6px 10px;white-space:nowrap;text-align:left;}
+  th{position:sticky;top:0;background:#f0f3f8;font-weight:600;z-index:1;}
+  tr:nth-child(even) td{background:#fafbfc;}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:var(--brand-soft);color:var(--brand);}
+  .log{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:#0f172a;color:#cbd5e1;
+    border-radius:8px;padding:12px;max-height:220px;overflow:auto;white-space:pre-wrap;margin:0;}
+  .cols{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .col{background:#eef2f7;border-radius:6px;padding:3px 8px;font-size:12px;color:var(--sub);}
+  .cfg{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:6px;}
+  .cfg .field{display:flex;flex-direction:column;gap:4px;}
+  .cfg .field small{color:var(--sub);font-size:11px;}
+  .weights{grid-template-columns:repeat(3,1fr);}
+  .empty{color:var(--sub);font-size:13px;padding:8px 0;}
+  .hide{display:none;}
+  .note{font-size:12px;color:var(--sub);background:#fff8ec;border:1px solid #ffe2ad;border-radius:8px;padding:8px 12px;margin-top:10px;}
+  .warnbox{font-size:13px;color:#8a3b00;background:#fff4e5;border:1px solid #ffd29e;border-radius:8px;padding:12px 14px;}
+  .warnbox b{color:#7a3200;}
+  .status{font-size:13px;padding:10px 12px;border-radius:8px;background:#eef2f7;color:var(--ink);margin-top:6px;}
+  .status.run{background:#eaf1ff;color:var(--brand);}
+  .status.done{background:#e6f7ee;color:var(--ok);}
+  .status.err{background:#fdecec;color:var(--bad);}
+  .spinner{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;
+    border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .bar{height:8px;background:#e6ebf2;border-radius:999px;overflow:hidden;margin-top:8px;}
+  .bar > i{display:block;height:100%;width:0;background:var(--brand);transition:width .4s;}
+
+  /* ---- 页签 ---- */
+  .tabs{display:flex;gap:8px;margin-bottom:16px;}
+  .tab{font:inherit;cursor:pointer;padding:10px 18px;border-radius:10px 10px 0 0;border:1px solid var(--line);
+    background:#fff;color:var(--sub);font-weight:600;}
+  .tab.active{background:var(--brand);border-color:var(--brand);color:#fff;}
+  .tab:hover:not(.active){color:var(--brand);border-color:var(--brand);}
+
+  /* ---- FBA 三文件网格 ---- */
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px;}
+  .three .field{display:flex;flex-direction:column;gap:6px;}
+  .three .drop{padding:18px 10px;font-size:13px;}
+  .three .meta{margin:2px 0 0;font-size:12px;}
+  .dlrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;}
+
+  /* ---- 汇总卡片 ---- */
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:6px;}
+  .stat{background:#f7f9fc;border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+  .stat .k{font-size:12px;color:var(--sub);}
+  .stat .v{font-size:22px;font-weight:700;margin-top:4px;}
+  .stat.ok .v{color:var(--ok);} .stat.bad .v{color:var(--bad);} .stat.warn .v{color:var(--warn);}
+  .st-miss{color:var(--bad);font-weight:600;}
+  .st-extra{color:var(--warn);font-weight:600;}
+  .st-both{color:var(--ok);font-weight:600;}
+  tr.row-miss td:first-child{box-shadow:inset 3px 0 0 var(--bad);}
+  tr.row-extra td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
+  tr.row-both td:first-child{box-shadow:inset 3px 0 0 var(--ok);}
+</style>
+</head>
+<body>
+<header>
+  <h1>店铺销量数据处理工具</h1>
+  <p>上传原始 Excel → 后台解析转换 → 完成后下载结果（大文件不再经浏览器直接解析）</p>
+</header>
+
+<main>
+  <!-- 0. 服务状态（两个页签共用） -->
+  <section class="card">
+    <h2>服务连接 <span class="badge" id="modeBadge">检测中…</span></h2>
+    <div id="connNote"></div>
+  </section>
+
+  <!-- 页签导航 -->
+  <div class="tabs">
+    <button class="tab active" data-tab="sales">① 店铺销量处理</button>
+    <button class="tab" data-tab="fba">② FBA需求差异分析</button>
+  </div>
+
+  <!-- ============ 页签一：销量处理 ============ -->
+  <div class="panel" id="panel-sales">
+    <section class="card">
+      <h2>① 选择原始数据文件（店铺销量数据，应不含 A 列与 M 列）</h2>
+      <div class="drop" id="drop">
+        点击或拖拽 Excel 文件到此处（<b>.xlsx</b>）
+        <input type="file" id="file" accept=".xlsx,.xls" class="hide" />
+      </div>
+      <div class="meta" id="fileMeta">尚未选择文件</div>
+    </section>
+
+    <section class="card">
+      <h2>② 加权占比与处理配置</h2>
+      <div class="meta">处理逻辑：<span class="badge">A列=店铺+ASIN ｜ M列=加权日均销量</span></div>
+      <div class="meta" style="margin-top:14px">加权占比（随时可改，自动归一化）</div>
+      <div class="row" style="margin-bottom:8px">
+        <label>预设：</label>
+        <select id="presetSel">
+          <option value="default" selected>默认 60% / 30% / 10%</option>
+          <option value="recent">偏高近期 70% / 20% / 10%</option>
+          <option value="balanced">均衡 33.3% / 33.3% / 33.3%</option>
+          <option value="custom">自定义…</option>
+        </select>
+        <button id="savePreset">保存当前为自定义预设</button>
+      </div>
+      <div class="cfg weights">
+        <div class="field"><label>3天日均 占比(%)</label><input type="number" id="w3" value="60" step="1" min="0" /></div>
+        <div class="field"><label>7天日均 占比(%)</label><input type="number" id="w7" value="30" step="1" min="0" /></div>
+        <div class="field"><label>14天日均 占比(%)</label><input type="number" id="w14" value="10" step="1" min="0" /></div>
+      </div>
+      <div class="meta" id="normReadout"></div>
+      <div class="note">公式：日均销量(加权) = (w3×三天日均 + w7×七天日均 + w14×十四天日均) ÷ (w3+w7+w14)。
+        输入任意占比，自动按总和归一化；默认 60/30/10 与你的快照样本完全吻合（误差为 0）。
+        自定义预设保存在本机浏览器，下次打开可直接选用。此权重同样用于页签②的销量结果计算。</div>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;color:var(--sub);font-size:13px">⚙ 高级：列名映射（一般不用改；列名与你的文件不一致时再填）</summary>
+        <div class="cfg" style="margin-top:10px">
+          <div class="field"><label>店铺列名</label><input type="text" id="colStore" value="店铺" /><small>用于拼接 A 列（店铺ASIN）</small></div>
+          <div class="field"><label>ASIN 列名</label><input type="text" id="colAsin" value="ASIN" /><small>用于拼接 A 列</small></div>
+          <div class="field"><label>三天日均列名</label><input type="text" id="colD3" value="三天日均销量" /></div>
+          <div class="field"><label>七天日均列名</label><input type="text" id="colD7" value="七天日均销量" /></div>
+          <div class="field"><label>十四天日均列名</label><input type="text" id="colD14" value="十四天日均销量" /></div>
+        </div>
+      </details>
+      <div class="actions" style="margin-top:18px">
+        <button class="primary big" id="runBtn" disabled>开始处理（上传到后台）</button>
+      </div>
+    </section>
+
+    <section class="card" id="resultCard" style="display:none">
+      <h2>③ 处理进度与结果</h2>
+      <div class="status" id="statusBox">等待开始…</div>
+      <div class="bar" id="barWrap" style="display:none"><i id="bar"></i></div>
+      <div class="actions" style="margin-top:14px">
+        <a id="dlLink" style="display:none;text-decoration:none"><button class="primary big" id="dlBtn">⬇ 下载结果文件</button></a>
+      </div>
+      <div class="meta" id="previewMeta" style="margin-top:14px"></div>
+      <div class="cols" id="colList"></div>
+      <div class="tablewrap"><table id="previewTable"></table></div>
+    </section>
+  </div>
+
+  <!-- ============ 页签二：FBA需求差异分析 ============ -->
+  <div class="panel hide" id="panel-fba">
+    <section class="card">
+      <h2>FBA需求差异分析（销量 + 运营级别 + 需求，三表合一）</h2>
+      <div class="meta">上传三个文件，自动产出：<b>① 销量处理结果</b> ｜ <b>② 运营级别处理结果</b>（含关联销量与「满足条件」标记）｜ <b>③ 差异比对</b>（运营满足条件 vs FBA需求）。</div>
+      <div class="three">
+        <div class="field">
+          <div class="drop" id="dropSales">点击或拖拽：<b>销量原始文件</b><input type="file" id="salesFile" accept=".xlsx,.xls" class="hide" /></div>
+          <div class="meta" id="salesMeta">尚未选择文件</div>
+        </div>
+        <div class="field">
+          <div class="drop" id="dropOps">点击或拖拽：<b>运营级别文件</b><input type="file" id="opsFile" accept=".xlsx,.xls" class="hide" /></div>
+          <div class="meta" id="opsMeta">尚未选择文件</div>
+        </div>
+        <div class="field">
+          <div class="drop" id="dropFba">点击或拖拽：<b>FBA需求文件</b><input type="file" id="fbaFile" accept=".xlsx,.xls" class="hide" /></div>
+          <div class="meta" id="fbaMeta">尚未选择文件</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:12px">口径：<b>满足条件</b> = 销售状态=「正常销售」且 配送类型=「FBA」且 销量(加权日均)&gt;0 且 <b>运营级别 ∈ 下方填入的「符合补货条件的级别」</b>（留空则不按运营级别筛选）。<b>销量(加权日均) 已按 店铺ASIN 跨多个 MSKU 汇总</b>（同一 ASIN 的不同商户 SKU 的销量相加，仅计「正常销售」MSKU），不再只取其中一个 MSKU。
+        差异按 <b>店铺ASIN</b> 比对：<span class="st-both">已生成</span>（两侧都有）／<span class="st-miss">缺失</span>（运营满足但需求未生成）／<span class="st-extra">多余</span>（需求有但运营不满足条件）。
+        销量原始文件的计算权重沿用上方<b>页签①</b>里填的比例（3天/7天/14天 占比）。</div>
+      <div style="margin-top:12px">
+        <div style="font-size:13px;color:#555;margin-bottom:4px">符合补货条件的运营级别（可填多个，逗号 / 空格 / 换行 / 顿号分隔；<b>留空 = 不按运营级别筛选，所有级别都参与</b>）</div>
+        <textarea id="fbaLevels" rows="2" placeholder="例如：六块, 其他, 大件" style="width:100%;max-width:560px;padding:8px 10px;border:1px solid #cdd3da;border-radius:8px;font:13px/1.5 -apple-system,Segoe UI,Roboto,'Microsoft YaHei',sans-serif;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div class="actions" style="margin-top:16px">
+        <button class="primary big" id="fbaRunBtn" disabled>开始处理（三表合一）</button>
+      </div>
+    </section>
+
+    <section class="card" id="fbaStatusCard" style="display:none">
+      <h2>处理进度</h2>
+      <div class="status" id="fbaStatus">等待开始…</div>
+      <div class="bar" id="fbaBarWrap" style="display:none"><i id="fbaBar"></i></div>
+    </section>
+
+    <section class="card" id="fbaSummaryCard" style="display:none">
+      <h2>汇总</h2>
+      <div class="meta" id="fbaLevelsMeta"></div>
+      <div class="summary-grid" id="fbaSummary"></div>
+      <div class="dlrow">
+        <a id="dlSalesLink" style="text-decoration:none"><button class="primary">⬇ 销量处理结果</button></a>
+        <a id="dlOpsLink" style="text-decoration:none"><button class="primary">⬇ 运营级别处理结果</button></a>
+        <a id="dlDiffLink" style="text-decoration:none"><button class="primary">⬇ 差异比对结果</button></a>
+      </div>
+    </section>
+
+    <section class="card" id="fbaDiffCard" style="display:none">
+      <h2>差异预览（前 200 行，下载文件含全部结果）</h2>
+      <div class="meta" id="fbaDiffMeta"></div>
+      <div class="tablewrap"><table id="fbaDiffTable"></table></div>
+    </section>
+  </div>
+</main>
+
+<script>
+/* =========================================================
+ * 全局状态
+ * =======================================================*/
+let SERVER = false;
+let API = '';
+let currentFile = null;
+let taskId = null;
+let pollTimer = null;
+
+// FBA 页签状态
+let fbaSid = null;
+let fbaFiles = { sales:null, ops:null, fba:null };
+let fbaTaskId = null;
+let fbaPollTimer = null;
+
+function enc(v){ return encodeURIComponent(v); }
+function setStatus(html, kind){
+  const el = document.getElementById('statusBox');
+  el.innerHTML = html; el.className = 'status' + (kind ? ' ' + kind : '');
+}
+function setFbaStatus(html, kind){
+  const el = document.getElementById('fbaStatus');
+  el.innerHTML = html; el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+/* =========================================================
+ * 页签切换
+ * =======================================================*/
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const t = btn.getAttribute('data-tab');
+    document.getElementById('panel-sales').classList.toggle('hide', t !== 'sales');
+    document.getElementById('panel-fba').classList.toggle('hide', t !== 'fba');
+  });
+});
+
+/* =========================================================
+ * 服务检测（仅服务器模式可用：上传→后台→下载）
+ * =======================================================*/
+function detectMode(){
+  const badge = document.getElementById('modeBadge');
+  const tryPing = async (base, tries) => {
+    for(let i=0;i<tries;i++){
+      try{
+        const r = await fetch(base + '/api/ping', {cache:'no-store'});
+        const j = await r.json();
+        if(j && j.ok) return base;
+      }catch(e){}
+      if(i < tries-1) await new Promise(r=>setTimeout(r, 500));
+    }
+    return null;
+  };
+  (async ()=>{
+    let base = null;
+    // 优先连「页面自身所在域名」（部署到公网时，页面与接口同源，自动连上）；
+    // 再回退本地（双击 start_server.bat 在本机使用时）。
+    const bases = [];
+    if(location.origin && location.protocol.indexOf('http') === 0) bases.push(location.origin);
+    bases.push('http://localhost:8000', 'http://127.0.0.1:8000');
+    for(const b of bases){
+      base = await tryPing(b, 6); if(base) break;
+    }
+    if(base){
+      SERVER = true; API = base;
+      badge.textContent = '已连接（服务器模式）';
+      badge.style.background = '#e6f7ee'; badge.style.color = 'var(--ok)';
+      document.getElementById('connNote').innerHTML = '已连接到本地处理服务，可上传任意大小的文件。';
+      document.getElementById('runBtn').disabled = !currentFile;
+    }else{
+      SERVER = false; API = '';
+      badge.textContent = '未连接';
+      badge.style.background = '#fdecec'; badge.style.color = 'var(--bad)';
+      document.getElementById('connNote').innerHTML =
+        '<div class="warnbox">⚠️ <b>未检测到本地服务。</b>本工具需要后台服务来解析文件（大文件无法在浏览器内解析）。'+
+        '请关闭本页面，双击 <b>start_server.bat</b> 启动服务后，访问 <b>http://localhost:8000</b> 重新打开本页。</div>';
+      document.getElementById('runBtn').disabled = true;
+    }
+    updateFbaBtn();
+  })();
+}
+
+/* =========================================================
+ * 页签一：文件选择
+ * =======================================================*/
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+drop.addEventListener('click', ()=>fileInput.click());
+fileInput.addEventListener('change', e=>{ if(e.target.files[0]) onFile(e.target.files[0]); });
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop', e=>{ const f=e.dataTransfer.files[0]; if(f) onFile(f); });
+
+function onFile(file){
+  currentFile = file;
+  const mb = (file.size/1024/1024).toFixed(1);
+  document.getElementById('fileMeta').innerHTML = `文件名 <b>${file.name}</b> ｜ 大小 <b>${mb} MB</b>`;
+  document.getElementById('runBtn').disabled = !SERVER;
+  taskId = null;
+  if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+  document.getElementById('resultCard').style.display = 'none';
+  setStatus('已选择文件，配置好权重后点击「开始处理」。', '');
+}
+
+/* =========================================================
+ * 加权占比预设 + 自定义保存 + 实时归一化显示
+ * =======================================================*/
+const PRESETS = { default:[60,30,10], recent:[70,20,10], balanced:[33.3,33.3,33.3] };
+const presetSel = document.getElementById('presetSel');
+const w3El = document.getElementById('w3');
+const w7El = document.getElementById('w7');
+const w14El = document.getElementById('w14');
+const normOut = document.getElementById('normReadout');
+
+function readWeights(){ return [num(w3El.value), num(w7El.value), num(w14El.value)]; }
+function num(v){
+  if(v === '' || v === null || v === undefined) return 0;
+  const n = parseFloat(String(v).replace(/,/g,''));
+  return isNaN(n) ? 0 : n;
+}
+function updateNormReadout(){
+  const [a,b,c] = readWeights();
+  const s = a+b+c;
+  if(s === 0){ normOut.innerHTML = '<span style="color:var(--bad)">⚠ 三个占比不能同时为 0</span>'; return; }
+  const p = x => (x/s*100).toFixed(1) + '%';
+  normOut.innerHTML = '归一化后实际占比：3天 <b>'+p(a)+'</b> ｜ 7天 <b>'+p(b)+'</b> ｜ 14天 <b>'+p(c)+'</b>';
+}
+function applyPreset(key){
+  if(key === 'custom'){ presetSel.value='custom'; return; }
+  const v = PRESETS[key]; if(!v) return;
+  w3El.value = v[0]; w7El.value = v[1]; w14El.value = v[2];
+  updateNormReadout();
+}
+presetSel.addEventListener('change', ()=>{
+  if(presetSel.value.startsWith('saved:')){
+    const name = presetSel.value.slice(6);
+    let saved = {}; try{ saved = JSON.parse(localStorage.getItem('amz_weight_presets') || '{}'); }catch(e){}
+    if(saved[name]){ w3El.value=saved[name][0]; w7El.value=saved[name][1]; w14El.value=saved[name][2]; updateNormReadout(); }
+    return;
+  }
+  applyPreset(presetSel.value);
+});
+[w3El,w7El,w14El].forEach(el=>el.addEventListener('input', ()=>{ presetSel.value='custom'; updateNormReadout(); }));
+function loadSavedPresets(){
+  try{
+    const saved = JSON.parse(localStorage.getItem('amz_weight_presets') || '{}');
+    Object.keys(saved).forEach(name=>{
+      const opt = document.createElement('option');
+      opt.value = 'saved:'+name;
+      opt.textContent = '自定义：'+name+' ('+saved[name].join(' / ')+')';
+      presetSel.appendChild(opt);
+    });
+  }catch(e){}
+}
+loadSavedPresets();
+document.getElementById('savePreset').addEventListener('click', ()=>{
+  const name = prompt('给当前自定义占比起个名字：', '我的预设');
+  if(!name) return;
+  const v = readWeights();
+  if(v[0]+v[1]+v[2] === 0){ alert('占比不能全为 0'); return; }
+  let saved = {}; try{ saved = JSON.parse(localStorage.getItem('amz_weight_presets') || '{}'); }catch(e){}
+  saved[name] = v; localStorage.setItem('amz_weight_presets', JSON.stringify(saved));
+  const opt = document.createElement('option');
+  opt.value = 'saved:'+name; opt.textContent = '自定义：'+name+' ('+v.join(' / ')+')';
+  presetSel.appendChild(opt); presetSel.value = opt.value; updateNormReadout();
+});
+updateNormReadout();
+
+/* =========================================================
+ * 页签一：开始处理
+ * =======================================================*/
+document.getElementById('runBtn').addEventListener('click', ()=>{
+  if(!SERVER){ alert('未连接到本地服务，请先启动 start_server.bat'); return; }
+  if(!currentFile){ alert('请先选择文件'); return; }
+  const [a,b,c] = readWeights();
+  if(a+b+c === 0){ alert('三个权重不能同时为 0'); return; }
+  const cols = {
+    colStore: document.getElementById('colStore').value.trim(),
+    colAsin:  document.getElementById('colAsin').value.trim(),
+    colD3:    document.getElementById('colD3').value.trim(),
+    colD7:    document.getElementById('colD7').value.trim(),
+    colD14:   document.getElementById('colD14').value.trim(),
+  };
+  const parts = ['w3='+enc(a),'w7='+enc(b),'w14='+enc(c), 'filename='+enc(currentFile.name)];
+  for(const k in cols){ if(cols[k]) parts.push(k+'='+enc(cols[k])); }
+
+  document.getElementById('resultCard').style.display = 'block';
+  document.getElementById('dlLink').style.display = 'none';
+  document.getElementById('barWrap').style.display = 'block';
+  setStatus('<span class="spinner"></span>正在上传文件到后台…', 'run');
+
+  (async ()=>{
+    try{
+      const r = await fetch(API + '/api/tasks?' + parts.join('&'), { method:'POST', body: currentFile });
+      if(!r.ok){ setStatus('⚠ 后台返回错误：HTTP '+r.status, 'err'); return; }
+      const j = await r.json();
+      taskId = j.id;
+      setStatus('<span class="spinner"></span>已上传，后台处理中…', 'run');
+      poll();
+    }catch(e){ setStatus('⚠ 上传失败：'+e.message+'（确认服务已启动？）', 'err'); }
+  })();
+});
+
+function poll(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async ()=>{
+    if(!taskId) return;
+    try{
+      const r = await fetch(API + '/api/tasks/' + taskId, {cache:'no-store'});
+      const j = await r.json();
+      if(j.status === 'running'){
+        const n = j.n_rows || 0;
+        setStatus('<span class="spinner"></span>后台处理中… 已处理 <b>'+n.toLocaleString()+'</b> 行', 'run');
+        document.getElementById('bar').style.width = '60%';
+      }else if(j.status === 'done'){
+        clearInterval(pollTimer); pollTimer = null; finishDone(j);
+      }else if(j.status === 'error'){
+        clearInterval(pollTimer); pollTimer = null;
+        setStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        document.getElementById('barWrap').style.display = 'none';
+      }
+    }catch(e){}
+  }, 1000);
+}
+function finishDone(j){
+  document.getElementById('bar').style.width = '100%';
+  setStatus('✅ 处理完成，共 <b>'+((j.n_rows||0).toLocaleString())+'</b> 行 ｜ 点击右侧按钮下载结果', 'done');
+  const link = document.getElementById('dlLink');
+  link.href = API + '/api/tasks/' + taskId + '/download';
+  link.style.display = 'inline-block';
+  renderPreview(j.header || [], j.preview_rows || []);
+}
+function renderPreview(header, rows){
+  document.getElementById('previewMeta').innerHTML =
+    `结果列数 <b>${header.length}</b> ｜ 预览前 <b>${rows.length}</b> 行（下载文件含全部结果）`;
+  document.getElementById('colList').innerHTML = header.map(c=>`<span class="col">${c}</span>`).join('');
+  const t = document.getElementById('previewTable');
+  if(!rows.length){ t.innerHTML='<tr><td class="empty">无预览数据</td></tr>'; return; }
+  const head = '<tr>'+header.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';
+  const body = rows.map(r=>'<tr>'+header.map((c,i)=>`<td>${esc(r[i])}</td>`).join('')+'</tr>').join('');
+  t.innerHTML = head + body;
+}
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+}
+
+/* =========================================================
+ * 页签二：FBA 三文件选择 + 上传 + 处理
+ * =======================================================*/
+function bindFbaDrop(zoneId, inputId, metaId, slot){
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  zone.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', e=>{ if(e.target.files[0]) onFbaFile(slot, e.target.files[0], metaId); });
+  ['dragover','dragenter'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.add('over');}));
+  ['dragleave','drop'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.remove('over');}));
+  zone.addEventListener('drop', e=>{ const f=e.dataTransfer.files[0]; if(f) onFbaFile(slot, f, metaId); });
+}
+function onFbaFile(slot, file, metaId){
+  fbaFiles[slot] = file;
+  const mb = (file.size/1024/1024).toFixed(1);
+  document.getElementById(metaId).innerHTML = `文件名 <b>${file.name}</b> ｜ 大小 <b>${mb} MB</b>`;
+  updateFbaBtn();
+}
+function updateFbaBtn(){
+  const ready = SERVER && fbaFiles.sales && fbaFiles.ops && fbaFiles.fba;
+  document.getElementById('fbaRunBtn').disabled = !ready;
+}
+bindFbaDrop('dropSales','salesFile','salesMeta','sales');
+bindFbaDrop('dropOps','opsFile','opsMeta','ops');
+bindFbaDrop('dropFba','fbaFile','fbaMeta','fba');
+
+document.getElementById('fbaRunBtn').addEventListener('click', ()=>{
+  if(!SERVER){ alert('未连接到本地服务，请先启动 start_server.bat'); return; }
+  if(!(fbaFiles.sales && fbaFiles.ops && fbaFiles.fba)){ alert('请先上传三个文件'); return; }
+  const [a,b,c] = readWeights();
+  if(a+b+c === 0){ alert('三个权重不能同时为 0'); return; }
+
+  document.getElementById('fbaStatusCard').style.display = 'block';
+  document.getElementById('fbaSummaryCard').style.display = 'none';
+  document.getElementById('fbaDiffCard').style.display = 'none';
+  document.getElementById('fbaBarWrap').style.display = 'block';
+  setFbaStatus('<span class="spinner"></span>正在上传三个文件到后台…（销量文件较大，请稍候）', 'run');
+
+  (async ()=>{
+    try{
+      fbaSid = (crypto.randomUUID ? crypto.randomUUID() : ('s'+Date.now()+Math.random().toString(16).slice(2)));
+      const slots = [['sales',fbaFiles.sales],['ops',fbaFiles.ops],['fba',fbaFiles.fba]];
+      let i = 0;
+      for(const [slot, file] of slots){
+        setFbaStatus(`<span class="spinner"></span>正在上传第 ${i+1}/3 个文件：<b>${file.name}</b>…`, 'run');
+        const r = await fetch(`${API}/api/upload?sid=${enc(fbaSid)}&slot=${slot}`, { method:'POST', body: file });
+        if(!r.ok){ setFbaStatus('⚠ 上传失败：HTTP '+r.status, 'err'); return; }
+        i++;
+      }
+      // 触发链式处理
+      const parts = ['type=fba','sid='+enc(fbaSid),'w3='+enc(a),'w7='+enc(b),'w14='+enc(c)];
+      for(const x of parseFbaLevels()){ parts.push('levels='+enc(x)); }
+      setFbaStatus('<span class="spinner"></span>三文件已上传，后台正在串联处理（销量→运营级别→差异）…', 'run');
+      const r2 = await fetch(`${API}/api/tasks?`+parts.join('&'), { method:'POST' });
+      if(!r2.ok){ setFbaStatus('⚠ 后台返回错误：HTTP '+r2.status, 'err'); return; }
+      const j2 = await r2.json();
+      fbaTaskId = j2.id;
+      fbaPoll();
+    }catch(e){
+      setFbaStatus('⚠ 处理失败：'+e.message+'（确认服务已启动？）', 'err');
+    }
+  })();
+});
+
+function parseFbaLevels(){
+  const v = (document.getElementById('fbaLevels').value || '').trim();
+  if(!v) return [];
+  return v.split(/[,\s;；、]+/).map(s=>s.trim()).filter(Boolean);
+}
+
+function fbaPoll(){
+  if(fbaPollTimer) clearInterval(fbaPollTimer);
+  fbaPollTimer = setInterval(async ()=>{
+    if(!fbaTaskId) return;
+    try{
+      const r = await fetch(API + '/api/tasks/' + fbaTaskId, {cache:'no-store'});
+      const j = await r.json();
+      if(j.status === 'running'){
+        const n = j.n_rows || 0;
+        setFbaStatus('<span class="spinner"></span>后台处理中… 已处理销量 <b>'+n.toLocaleString()+'</b> 行（随后计算运营级别与差异）', 'run');
+        document.getElementById('fbaBar').style.width = '55%';
+      }else if(j.status === 'done'){
+        clearInterval(fbaPollTimer); fbaPollTimer = null; fbaFinishDone(j);
+      }else if(j.status === 'error'){
+        clearInterval(fbaPollTimer); fbaPollTimer = null;
+        setFbaStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        document.getElementById('fbaBarWrap').style.display = 'none';
+      }
+    }catch(e){}
+  }, 1000);
+}
+
+function fbaFinishDone(j){
+  document.getElementById('fbaBar').style.width = '100%';
+  const s = j.summary || {};
+  setFbaStatus('✅ 处理完成！运营满足条件(唯一店铺ASIN) <b>'+(s.op_meet||0).toLocaleString()+'</b> ｜ '+
+    'FBA需求(唯一) <b>'+(s.fba_unique||0).toLocaleString()+'</b> ｜ '+
+    '已生成 <b>'+(s.both||0).toLocaleString()+'</b> ｜ 缺失 <b>'+(s.miss||0).toLocaleString()+'</b> ｜ 多余 <b>'+(s.extra||0).toLocaleString()+'</b>', 'done');
+  // 下载链接
+  document.getElementById('dlSalesLink').href = `${API}/api/tasks/${fbaTaskId}/download?which=sales`;
+  document.getElementById('dlOpsLink').href   = `${API}/api/tasks/${fbaTaskId}/download?which=ops`;
+  document.getElementById('dlDiffLink').href  = `${API}/api/tasks/${fbaTaskId}/download?which=diff`;
+  // 汇总卡片
+  const sg = document.getElementById('fbaSummary');
+  const cards = [
+    {k:'运营满足条件(唯一店铺ASIN)', v:s.op_meet||0, cls:'ok'},
+    {k:'FBA需求(唯一店铺ASIN)', v:s.fba_unique||0, cls:''},
+    {k:'已生成(两侧都有)', v:s.both||0, cls:'ok'},
+    {k:'缺失(运营满足·需求未生成)', v:s.miss||0, cls:'bad'},
+    {k:'多余(需求有·运营不满足)', v:s.extra||0, cls:'warn'},
+    {k:'合计比对', v:s.total||0, cls:''},
+  ];
+  sg.innerHTML = cards.map(c=>`<div class="stat ${c.cls}"><div class="k">${c.k}</div><div class="v">${(c.v||0).toLocaleString()}</div></div>`).join('');
+  document.getElementById('fbaSummaryCard').style.display = 'block';
+  // 已应用的运营级别筛选 + 文件中可选值提示
+  const lv = parseFbaLevels();
+  const di = (j.level_info && j.level_info.distinct) ? j.level_info.distinct : [];
+  let meta;
+  if(lv.length){
+    const missing = lv.filter(x => di.indexOf(x) < 0);
+    meta = '已按运营级别筛选（符合补货条件）：<b>'+esc(lv.join('、'))+'</b>'
+      + (missing.length ? ' ｜ <span style="color:#c0392b">注意：以下填入值未在文件中出现（可能拼写不符）：'+esc(missing.join('、'))+'</span>' : '');
+  } else {
+    meta = '未填运营级别 → 不按运营级别筛选（全部级别参与）'
+      + (di.length ? ' ｜ 文件中出现的运营级别可选值：<b>'+esc(di.join('、'))+'</b>' : '');
+  }
+  document.getElementById('fbaLevelsMeta').innerHTML = meta;
+  // 差异预览
+  renderFbaDiff(j.diff_header || [], j.diff_preview || []);
+}
+
+function renderFbaDiff(header, rows){
+  const card = document.getElementById('fbaDiffCard');
+  document.getElementById('fbaDiffMeta').innerHTML = `差异结果列数 <b>${header.length}</b> ｜ 预览前 <b>${rows.length}</b> 行（按 缺失→多余→已生成 排序，下载文件含全部结果）`;
+  const t = document.getElementById('fbaDiffTable');
+  if(!rows.length){ t.innerHTML='<tr><td class="empty">无差异数据</td></tr>'; card.style.display='block'; return; }
+  const head = '<tr>'+header.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';
+  const body = rows.map(r=>{
+    const st = r[1] || '';
+    const cls = st.startsWith('缺失') ? 'row-miss' : (st.startsWith('多余') ? 'row-extra' : (st==='已生成' ? 'row-both' : ''));
+    return '<tr class="'+cls+'">'+header.map((c,i)=>`<td>${esc(r[i])}</td>`).join('')+'</tr>';
+  }).join('');
+  t.innerHTML = head + body;
+  card.style.display = 'block';
+}
+
+detectMode();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# 运行期临时文件（勿提交）
+_in_*.xlsx
+_out_*.xlsx
+_sheet_*.tmp
+_up_*.xlsx
+_fba_*.xlsx
+__pycache__/
+*.pyc
+venv/
+.env
+
+# 项目内部记忆 / 杂项（勿提交）
+.workbuddy-ai/
+click
