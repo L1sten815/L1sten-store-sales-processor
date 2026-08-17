@@ -7,15 +7,21 @@
 <style>
   :root{
     --bg:#eef1f7; --card:#ffffff; --line:#e7ebf2; --ink:#1b2430;
-    --sub:#67748a; --brand:#3b5bdb; --brand-2:#5c7cfa; --brand-soft:#eaf0ff;
+    --sub:#67748a; --brand:#7c5cfc; --brand-2:#4f9bf6; --brand-soft:#eef0ff;
     --ok:#2f9e44; --ok-soft:#e7f6ec; --warn:#e8590c; --warn-soft:#fff0e6;
     --bad:#e03131; --bad-soft:#fdeaea;
     --shadow:0 1px 2px rgba(16,24,40,.05), 0 10px 30px rgba(16,24,40,.06);
   }
   *{box-sizing:border-box;}
   body{margin:0;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-    background:linear-gradient(180deg,#eef2f8 0%,#e8edf5 100%);color:var(--ink);font-size:14px;line-height:1.55;
-    min-height:100vh;}
+    color:var(--ink);font-size:14px;line-height:1.55;min-height:100vh;
+    background:
+      radial-gradient(900px 620px at 10% 6%, rgba(124,92,252,.16), transparent 60%),
+      radial-gradient(820px 560px at 93% 3%, rgba(79,155,246,.15), transparent 60%),
+      radial-gradient(860px 640px at 84% 94%, rgba(168,85,247,.13), transparent 60%),
+      radial-gradient(780px 560px at 6% 97%, rgba(56,189,248,.12), transparent 60%),
+      linear-gradient(180deg,#f7f8fc 0%,#eef1f9 100%);
+    background-attachment:fixed;}
   header{display:flex;align-items:center;gap:14px;padding:18px 28px;
     background:linear-gradient(120deg,#3b5bdb,#5c7cfa);color:#fff;
     box-shadow:0 2px 16px rgba(59,91,219,.28);}
