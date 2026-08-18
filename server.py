@@ -456,7 +456,9 @@ def process_eu_check(diff_path, sales_raw_path, out_path, w3, w7, w14, tol=0.01,
     if WSUM == 0:
         raise ValueError("三个权重不能同时为 0")
 
-    # 1) 读销量原始(快照)：按 店铺ASIN 跨 MSKU 累加 加权日均（仅正常销售 MSKU）
+    # 1) 读销量原始(快照)：按 MSKU 维度，把同一 MSKU 在欧洲各店铺的加权日均相加。
+    #    关键：欧洲区同一 (ASIN, MSKU) 会跨多个欧洲店铺各有一行（探查确认 67,282 个欧洲 (ASIN,MSKU) 中 58,012 个跨店铺），
+    #    所以累计 key 必须是 MSKU（跨欧洲店铺求和），而不是 店铺ASIN（那只算单店铺、会漏算其他欧洲店的同 MSKU 销量）。
     C = dict(DEF_COLS)
     sh, sit = _calamine_rows(sales_raw_path) if _try_calamine(sales_raw_path) else _openpyxl_rows(sales_raw_path)
     def fidx(hdr, name):
@@ -464,26 +466,26 @@ def process_eu_check(diff_path, sales_raw_path, out_path, w3, w7, w14, tol=0.01,
             if h == name:
                 return i
         return -1
-    i_store = fidx(sh, C['store']); i_asin = fidx(sh, C['asin'])
+    i_store = fidx(sh, C['store']); i_asin = fidx(sh, C['asin']); i_msku = fidx(sh, 'MSKU')
     i_d3 = fidx(sh, C['d3']); i_d7 = fidx(sh, C['d7']); i_d14 = fidx(sh, C['d14'])
     i_stat = fidx(sh, '状态')
-    if i_store < 0 or i_asin < 0 or i_d3 < 0 or i_d7 < 0 or i_d14 < 0:
-        raise ValueError("销量原始缺少必要列：店铺/ASIN/三天日均销量/七天日均销量/十四天日均销量（当前列：%s）" % sh)
-    snap = {}      # 店铺ASIN -> 加权日均累计（仅正常销售）
-    snap_n = {}    # 店铺ASIN -> 正常销售 MSKU 数
-    snap_all_n = {}  # 店铺ASIN -> 全部 MSKU 数（用于区分"仅停止销售"与"快照无此ASIN"）
+    if i_store < 0 or i_asin < 0 or i_msku < 0 or i_d3 < 0 or i_d7 < 0 or i_d14 < 0:
+        raise ValueError("销量原始缺少必要列：店铺/ASIN/MSKU/三天日均销量/七天日均销量/十四天日均销量（当前列：%s）" % sh)
+    msku_snap = {}   # MSKU -> 该 MSKU 在欧洲各店铺的加权日均累计（仅正常销售）
+    msku_of = {}     # 店铺ASIN -> set(MSKU)  （欧洲，用于从差异表反查该店铺ASIN对应的 MSKU 集合）
     for r in sit:
-        store = r[i_store]; asin = r[i_asin]
-        if store is None or asin is None:
+        store = r[i_store]; asin = r[i_asin]; msku = r[i_msku]
+        if store is None or asin is None or msku is None:
+            continue
+        if not _is_european(str(store), str(asin)):
             continue
         a = str(store) + str(asin)
-        snap_all_n[a] = snap_all_n.get(a, 0) + 1
+        msku_of.setdefault(a, set()).add(str(msku))
         # 仅计「正常销售」MSKU 的加权日均（无 状态 列时汇总全部，避免漏算）
         if i_stat >= 0 and r[i_stat] is not None and str(r[i_stat]).strip() != '正常销售':
             continue
         m = (w3 * fnum(r[i_d3]) + w7 * fnum(r[i_d7]) + w14 * fnum(r[i_d14])) / WSUM
-        snap[a] = snap.get(a, 0.0) + m
-        snap_n[a] = snap_n.get(a, 0) + 1
+        msku_snap[str(msku)] = msku_snap.get(str(msku), 0.0) + m
 
     # 2) 读差异表，筛 多余 行
     dh, dit = _calamine_rows(diff_path) if _try_calamine(diff_path) else _openpyxl_rows(diff_path)
@@ -497,7 +499,7 @@ def process_eu_check(diff_path, sales_raw_path, out_path, w3, w7, w14, tol=0.01,
         return r[i] if (0 <= i < len(r)) else None
 
     out_header = ['店铺ASIN', '是否欧洲', '快照MSKU累计销量(加权)', 'FBA需求日均销量(加权)首行',
-                  '差值(快照-需求)', '是否一致', '快照正常销售MSKU数', '备注']
+                  '差值(快照-需求)', '是否一致', '快照MSKU数(欧洲跨店铺)', '备注']
     rows = []
     preview = []
     n_total = n_eu = n_noneu = n_consistent = n_inconsistent = n_missing = 0
@@ -515,27 +517,34 @@ def process_eu_check(diff_path, sales_raw_path, out_path, w3, w7, w14, tol=0.01,
             n_eu += 1
         else:
             n_noneu += 1
-        sv = snap.get(a)
-        if sv is None:
+        msks = msku_of.get(a)
+        if msks is None:
             n_missing += 1
             consistent = False
             diff_v = ''
-            note = '快照无此店铺ASIN' if not snap_all_n.get(a) else '快照仅停止销售MSKU(无正常销售)'
+            sv = None
+            note = '快照无此店铺ASIN(欧洲)'
         else:
-            diff_v = round(sv - fba_val, 4)
-            consistent = abs(diff_v) <= tol
-            if consistent:
-                n_consistent += 1
+            sv = sum(msku_snap.get(mk, 0.0) for mk in msks)
+            if sv == 0:
+                consistent = False
+                diff_v = round(sv - fba_val, 4)
+                note = '快照仅停止销售MSKU(无正常销售)'
             else:
-                n_inconsistent += 1
-            note = ''
+                diff_v = round(sv - fba_val, 4)
+                consistent = abs(diff_v) <= tol
+                if consistent:
+                    n_consistent += 1
+                else:
+                    n_inconsistent += 1
+                note = ''
         row = [a,
                '是' if is_eu else '否',
                round(sv, 4) if sv is not None else '',
                round(fba_val, 4),
                diff_v,
                '是' if consistent else '否',
-               snap_n.get(a, 0),
+               len(msks),
                note]
         rows.append(row)
         if len(preview) < 200:

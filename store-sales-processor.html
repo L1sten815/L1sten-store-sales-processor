@@ -322,7 +322,7 @@
           <div class="meta" id="euSalesMeta">尚未选择文件</div>
         </div>
       </div>
-      <div class="note" style="margin-top:12px">口径：<b>快照MSKU累计销量(加权)</b> = 对同一 店铺ASIN，把所有「正常销售」MSKU 的 (w3×三天日均 + w7×七天日均 + w14×十四天日均)÷(w3+w7+w14) 求和（与页签②销量查表同一套算法）。
+      <div class="note" style="margin-top:12px">口径：<b>快照MSKU累计销量(加权)</b> = 按 <b>MSKU 维度</b>，把同一 MSKU 在<b>欧洲各店铺</b>的 (w3×三天日均 + w7×七天日均 + w14×十四天日均)÷(w3+w7+w14) 求和。欧洲区同一 ASIN 的 MSKU 会跨多个欧洲店铺各有一行，所以累计 key 是 <b>MSKU（跨店铺求和）</b>，不是 店铺ASIN（那只算单店铺会漏算其他欧洲店的同 MSKU 销量）。仅计「正常销售」MSKU。
         欧洲区判定：店铺名含 <b>EU</b> 标识，或国家码为 DE/FR/ES/IT/BE/NL/IE/SE/PL 等欧洲站点。一致阈值：|快照累计 − FBA需求首行| ≤ 0.01。</div>
       <div class="meta" style="margin-top:12px">加权占比（与页签①同口径，默认 60/30/10）</div>
       <div class="cfg weights">
