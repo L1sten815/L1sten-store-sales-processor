@@ -1,5 +1,14 @@
 @echo off
 setlocal
+REM === log fallback: if double-click flashes/closes, full output is saved to start_server.log ===
+if not defined _SSP_LOGGED (
+  set "_SSP_LOGGED=1"
+  call "%~f0" > "%~dp0start_server.log" 2>&1
+  echo Run log written to: %~dp0start_server.log
+  echo (open it with Notepad to see what happened)
+  pause
+  exit /b
+)
 REM ============================================================
 REM  可移植启动器：发给别人也能用。
 REM  用法：把本文件、server.py、store-sales-processor.html 放在同一文件夹，双击即可。

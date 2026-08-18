@@ -571,6 +571,103 @@ def process_eu_check(diff_path, sales_raw_path, out_path, w3, w7, w14, tol=0.01,
     return out_header, n_total, summary, preview
 
 
+def process_eu_mismatch_detail(diff_path, sales_raw_path, out_path, w3, w7, w14, tol=0.01, on_progress=None):
+    """导出页签③中『不一致/缺失』的欧洲区多余行，并展开每个 店铺ASIN 对应的逐 MSKU 明细（含各欧洲店铺的加权日均）。
+    输出双 sheet xlsx：sheet1=不一致汇总, sheet2=MSKU明细。返回 (header_summary, n_mismatch, summary)。
+    """
+    import openpyxl
+    WSUM = w3 + w7 + w14
+    if WSUM == 0:
+        raise ValueError("三个权重不能同时为 0")
+    C = dict(DEF_COLS)
+    sh, sit = _calamine_rows(sales_raw_path) if _try_calamine(sales_raw_path) else _openpyxl_rows(sales_raw_path)
+    def fidx(hdr, name):
+        for i, h in enumerate(hdr):
+            if h == name:
+                return i
+        return -1
+    i_store = fidx(sh, C['store']); i_asin = fidx(sh, C['asin']); i_msku = fidx(sh, 'MSKU')
+    i_d3 = fidx(sh, C['d3']); i_d7 = fidx(sh, C['d7']); i_d14 = fidx(sh, C['d14'])
+    i_stat = fidx(sh, '状态')
+    if i_store < 0 or i_asin < 0 or i_msku < 0 or i_d3 < 0 or i_d7 < 0 or i_d14 < 0:
+        raise ValueError("销量原始缺少必要列：店铺/ASIN/MSKU/三天日均销量/七天日均销量/十四天日均销量（当前列：%s）" % sh)
+    msku_snap = {}     # MSKU -> 该 MSKU 在欧洲各店铺的加权日均累计（仅正常销售）
+    msku_detail = {}   # 店铺ASIN -> list[(MSKU, 店铺, 状态, d3, d7, d14, m)]  （欧洲，所有状态都保留便于核对）
+    for r in sit:
+        store = r[i_store]; asin = r[i_asin]; msku = r[i_msku]
+        if store is None or asin is None or msku is None:
+            continue
+        if not _is_european(str(store), str(asin)):
+            continue
+        a = str(store) + str(asin)
+        msku_s = str(msku)
+        d3 = fnum(r[i_d3]); d7 = fnum(r[i_d7]); d14 = fnum(r[i_d14])
+        m = (w3 * d3 + w7 * d7 + w14 * d14) / WSUM
+        stat = str(r[i_stat]).strip() if (i_stat >= 0 and r[i_stat] is not None) else ''
+        msku_detail.setdefault(a, []).append((msku_s, str(store), stat, d3, d7, d14, m))
+        if stat != '正常销售':
+            continue
+        msku_snap[msku_s] = msku_snap.get(msku_s, 0.0) + m
+
+    dh, dit = _calamine_rows(diff_path) if _try_calamine(diff_path) else _openpyxl_rows(diff_path)
+    diA = fidx(dh, '店铺ASIN'); diSt = fidx(dh, '运营-店铺'); diFba = fidx(dh, 'FBA需求-日均销量(加权)首行')
+    if diA < 0:
+        raise ValueError("差异表缺少 店铺ASIN 列（当前列：%s）" % dh)
+    if diFba < 0:
+        raise ValueError("差异表缺少 FBA需求-日均销量(加权)首行 列（当前列：%s）" % dh)
+    def get(r, i):
+        return r[i] if (0 <= i < len(r)) else None
+
+    hdr_sum = ['店铺ASIN', '是否欧洲', '快照MSKU累计销量(加权)', 'FBA需求日均销量(加权)首行', '差值(快照-需求)', '备注']
+    hdr_det = ['店铺ASIN', 'MSKU', '店铺', '状态', '三天日均销量', '七天日均销量', '十四天日均销量', '单MSKU加权日均']
+    summary_rows = []
+    n_total = n_mismatch = 0
+    mismatch_asins = []
+    for r in dit:
+        st = str(get(r, 1)) if get(r, 1) is not None else ''
+        if not st.startswith('多余'):
+            continue
+        n_total += 1
+        a = str(get(r, diA)) if get(r, diA) is not None else ''
+        store = str(get(r, diSt)) if get(r, diSt) is not None else ''
+        fba_val = fnum(get(r, diFba))
+        is_eu = _is_european(store, a)
+        msks = msku_detail.get(a)
+        if msks is None:
+            sv = None; consistent = False; diff_v = ''; note = '快照无此店铺ASIN(欧洲)'
+        else:
+            sv = sum(msku_snap.get(mk, 0.0) for mk, _s, _st, _d3, _d7, _d14, _m in msks)
+            if sv == 0:
+                consistent = False; diff_v = round(sv - fba_val, 4); note = '快照仅停止销售MSKU(无正常销售)'
+            else:
+                diff_v = round(sv - fba_val, 4); consistent = abs(diff_v) <= tol; note = ''
+        if not consistent:
+            n_mismatch += 1
+            mismatch_asins.append(a)
+            summary_rows.append([a, '是' if is_eu else '否',
+                                  round(sv, 4) if sv is not None else '', round(fba_val, 4), diff_v, note])
+        if on_progress:
+            on_progress(n_total)
+    mismatch_asins = sorted(set(mismatch_asins))
+    det_rows = []
+    for a in mismatch_asins:
+        for (mk, st, stat, d3, d7, d14, m) in msku_detail.get(a, []):
+            det_rows.append([a, mk, st, stat, round(d3, 4), round(d7, 4), round(d14, 4), round(m, 4)])
+
+    wb = openpyxl.Workbook()
+    ws1 = wb.active; ws1.title = '不一致汇总'
+    ws1.append(hdr_sum)
+    for row in summary_rows:
+        ws1.append(row)
+    ws2 = wb.create_sheet('MSKU明细')
+    ws2.append(hdr_det)
+    for row in det_rows:
+        ws2.append(row)
+    wb.save(out_path)
+    summary = {'total_extra': n_total, 'mismatch': n_mismatch, 'detail_rows': len(det_rows)}
+    return hdr_sum, n_mismatch, summary
+
+
 def _try_calamine(path):
     try:
         from python_calamine import CalamineWorkbook
@@ -790,6 +887,34 @@ class H(http.server.BaseHTTPRequestHandler):
             self._json(202, {'id': tid, 'status': 'running', 'n_rows': 0})
             return
 
+        # ---- 多余欧洲区销量核对：导出不一致明细(含逐MSKU) ----
+        if typ == 'eu_detail':
+            sid = qs_get(p, 'sid') or ''
+            try:
+                w3 = float(qs_get(p, 'w3') or DEF[0])
+                w7 = float(qs_get(p, 'w7') or DEF[1])
+                w14 = float(qs_get(p, 'w14') or DEF[2])
+            except ValueError:
+                self._json(400, {'error': 'invalid weights'})
+                return
+            up = UPLOADS.get(sid, {})
+            if not (up.get('diff') and up.get('sales')):
+                self._json(400, {'error': '请先上传 差异表 与 销量原始文件'})
+                return
+            tid = uuid.uuid4().hex[:12]
+            task = {
+                'id': tid, 'status': 'running', 'type': 'eu_detail', 'filename': 'eu_detail',
+                'n_rows': 0, 'header': None, 'preview_rows': None, 'summary': None,
+                'error_msg': None, 'w': (w3, w7, w14), 'sid': sid,
+                'download_name': 'eu_mismatch_detail.xlsx',
+                'created': time.time(), 'finished': None,
+            }
+            with LOCK:
+                TASKS[tid] = task
+            threading.Thread(target=run_eu_detail, args=(sid, task), daemon=True).start()
+            self._json(202, {'id': tid, 'status': 'running', 'n_rows': 0})
+            return
+
         # ---- 销量处理（单文件） ----
         try:
             w3 = float(qs_get(p, 'w3') or DEF[0])
@@ -953,6 +1078,45 @@ def run_eu_check(sid, task):
             task['finished'] = time.time()
 
 
+def run_eu_detail(sid, task):
+    try:
+        up = UPLOADS.get(sid, {})
+        diff_p = up.get('diff'); sales_p = up.get('sales')
+        if not (diff_p and sales_p):
+            raise ValueError("缺少上传文件（差异表 / 销量原始）")
+        tid = task['id']
+        out_path = os.path.join(HERE, '_eu_detail_%s.xlsx' % tid)
+        w3, w7, w14 = task['w']
+
+        def prog(n):
+            with LOCK:
+                task['n_rows'] = n
+
+        hdr, n_mismatch, summary = process_eu_mismatch_detail(diff_p, sales_p, out_path, w3, w7, w14, on_progress=prog)
+        with LOCK:
+            task['status'] = 'done'
+            task['output_path'] = out_path
+            task['header'] = hdr
+            task['summary'] = summary
+            task['n_rows'] = n_mismatch
+            task['finished'] = time.time()
+        for k in ('diff', 'sales'):
+            pp = up.get(k)
+            if pp:
+                try:
+                    os.unlink(pp)
+                except OSError:
+                    pass
+        UPLOADS.pop(sid, None)
+    except Exception as e:
+        import traceback
+        with LOCK:
+            task['status'] = 'error'
+            task['error_msg'] = str(e)
+            task['traceback'] = traceback.format_exc()
+            task['finished'] = time.time()
+
+
 class ThreadingServer(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
 
@@ -972,6 +1136,8 @@ if __name__ == '__main__':
             extras.append('FBA任务')
         if 'process_eu_check' in src:
             extras.append('EU核对')
+        if 'process_eu_mismatch_detail' in src:
+            extras.append('EU明细')
     except Exception:
         pass
     print("当前版本： %s" % ('基础处理' if not extras else '基础处理 + ' + ' + '.join(extras)))
