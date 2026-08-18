@@ -1,51 +1,51 @@
 @echo off
 setlocal
 REM ============================================================
-REM  å¯ç§»æ¤å¯åŠ¨å™¨ï¼šå‘ç»™åˆ«äººä¹Ÿèƒ½ç”¨ã€‚
-REM  ç”¨æ³•ï¼šæŠŠæœ¬æ–‡ä»¶ã€server.pyã€store-sales-processor.html æ”¾åœ¨åŒä¸€æ–‡ä»¶å¤¹ï¼ŒåŒå‡»å³å¯ã€‚
-REM  å¯¹æ–¹éœ€è¦ï¼šPython 3.10+ï¼Œå¹¶å·²å®‰è£… python_calamine å’Œ openpyxl
-REM           ï¼ˆpip install -r requirements.txtï¼‰
+REM  ¿ÉÒÆÖ²Æô¶¯Æ÷£º·¢¸ø±ðÈËÒ²ÄÜÓÃ¡£
+REM  ÓÃ·¨£º°Ñ±¾ÎÄ¼þ¡¢server.py¡¢store-sales-processor.html ·ÅÔÚÍ¬Ò»ÎÄ¼þ¼Ð£¬Ë«»÷¼´¿É¡£
+REM  ¶Ô·½ÐèÒª£ºPython 3.10+£¬²¢ÒÑ°²×° python_calamine ºÍ openpyxl
+REM           £¨pip install -r requirements.txt£©
 REM  ============================================================
-REM ä»¥ã€Œæœ¬ bat è‡ªèº«æ‰€åœ¨ç›®å½•ã€ä¸ºå·¥ä½œç›®å½•ï¼ˆå…³é”®ï¼šä¸å†™æ­»è·¯å¾„ï¼‰
+REM ÒÔ¡¸±¾ bat ×ÔÉíËùÔÚÄ¿Â¼¡¹Îª¹¤×÷Ä¿Â¼£¨¹Ø¼ü£º²»Ð´ËÀÂ·¾¶£©
 cd /d "%~dp0"
 
 echo ============================================
 echo   Store Sales Processor - starting service
 echo ============================================
 
-REM --- 1) å®šä½ Python è§£é‡Šå™¨ï¼ˆæŒ‰ä¼˜å…ˆçº§å›žé€€ï¼‰ ---
+REM --- 1) ¶¨Î» Python ½âÊÍÆ÷£¨°´ÓÅÏÈ¼¶»ØÍË£© ---
 set "PYEXE="
-REM (a) éšåŒ…è‡ªå¸¦ venvï¼šæŠŠå« python_calamine / openpyxl çš„ venv æ–‡ä»¶å¤¹å‘½åä¸º venv æ”¾æœ¬ç›®å½•
+REM (a) Ëæ°ü×Ô´ø venv£º°Ñº¬ python_calamine / openpyxl µÄ venv ÎÄ¼þ¼ÐÃüÃûÎª venv ·Å±¾Ä¿Â¼
 if exist "%~dp0venv\Scripts\python.exe" set "PYEXE=%~dp0venv\Scripts\python.exe"
-REM (b) åŽŸä½œè€…æœºå™¨ä¸Šçš„ venvï¼ˆä¿æŒå…¼å®¹ï¼Œä»–äººæœºå™¨æ­¤è·¯å¾„ä¸å­˜åœ¨ä¼šè‡ªåŠ¨è·³è¿‡ï¼‰
+REM (b) Ô­×÷Õß»úÆ÷ÉÏµÄ venv£¨±£³Ö¼æÈÝ£¬ËûÈË»úÆ÷´ËÂ·¾¶²»´æÔÚ»á×Ô¶¯Ìø¹ý£©
 if not defined PYEXE if exist "C:/Users/71721/.workbuddy/binaries/python/envs/default/Scripts/python.exe" set "PYEXE=C:/Users/71721/.workbuddy/binaries/python/envs/default/Scripts/python.exe"
-REM (c) ç³»ç»Ÿ PATH ä¸­çš„ python
+REM (c) ÏµÍ³ PATH ÖÐµÄ python
 if not defined PYEXE (
   where python >nul 2>&1
   if not errorlevel 1 set "PYEXE=python"
 )
 if not defined PYEXE (
-  echo [é”™è¯¯] æœªæ‰¾åˆ° Pythonã€‚è¯·ï¼š
-  echo   1) å®‰è£… Python 3.10+ï¼ˆå‹¾é€‰ "Add to PATH"ï¼‰
-  echo   2) åœ¨æœ¬æ–‡ä»¶å¤¹æ‰“å¼€å‘½ä»¤è¡Œè¿è¡Œï¼š pip install -r requirements.txt
-  echo   3) å†æ¬¡åŒå‡»æœ¬æ–‡ä»¶
+  echo [´íÎó] Î´ÕÒµ½ Python¡£Çë£º
+  echo   1) °²×° Python 3.10+£¨¹´Ñ¡ "Add to PATH"£©
+  echo   2) ÔÚ±¾ÎÄ¼þ¼Ð´ò¿ªÃüÁîÐÐÔËÐÐ£º pip install -r requirements.txt
+  echo   3) ÔÙ´ÎË«»÷±¾ÎÄ¼þ
   pause
   exit /b 1
 )
-echo ä½¿ç”¨ Python: %PYEXE%
+echo Ê¹ÓÃ Python: %PYEXE%
 
-REM --- 1.5) ä¾èµ–è‡ªæ£€ ---
+REM --- 1.5) ÒÀÀµ×Ô¼ì ---
 "%PYEXE%" -c "import python_calamine, openpyxl" >nul 2>&1
 if errorlevel 1 (
-  echo [é”™è¯¯] ç¼ºå°‘ä¾èµ– python_calamine / openpyxlã€‚
-  echo   è¯·åœ¨æœ¬æ–‡ä»¶å¤¹æ‰“å¼€å‘½ä»¤è¡Œè¿è¡Œï¼š pip install -r requirements.txt
-  echo   ç„¶åŽå†æ¬¡åŒå‡»æœ¬æ–‡ä»¶ã€‚
+  echo [´íÎó] È±ÉÙÒÀÀµ python_calamine / openpyxl¡£
+  echo   ÇëÔÚ±¾ÎÄ¼þ¼Ð´ò¿ªÃüÁîÐÐÔËÐÐ£º pip install -r requirements.txt
+  echo   È»ºóÔÙ´ÎË«»÷±¾ÎÄ¼þ¡£
   pause
   exit /b 1
 )
 
-REM --- 2) å¼ºåˆ¶ç»“æŸä»»ä½•æ®‹ç•™çš„æ—§æœåŠ¡è¿›ç¨‹ï¼ˆå ç€ 8000 ç«¯å£ï¼‰ ---
-echo [1/3] æ¸…ç†æ—§çš„ 8000 ç«¯å£å ç”¨...
+REM --- 2) Ç¿ÖÆ½áÊøÈÎºÎ²ÐÁôµÄ¾É·þÎñ½ø³Ì£¨Õ¼×Å 8000 ¶Ë¿Ú£© ---
+echo [1/3] ÇåÀí¾ÉµÄ 8000 ¶Ë¿ÚÕ¼ÓÃ...
 set "KILLED="
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000 " ^| findstr LISTENING 2^>nul') do (
     echo     killing PID %%p ...
@@ -55,19 +55,27 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000 " ^| findstr LISTENING
 if not defined KILLED echo     no stale process on :8000.
 timeout /t 1 >nul
 
-REM --- 3) å¯åŠ¨æ–°çš„æœåŠ¡ ---
-echo [2/3] å¯åŠ¨æ–°çš„æœåŠ¡è¿›ç¨‹...
+REM --- 3) Æô¶¯ÐÂµÄ·þÎñ ---
+echo [2/3] Æô¶¯ÐÂµÄ·þÎñ½ø³Ì...
 start "Store Sales Processor" "%PYEXE%" server.py
 
-REM --- ç­‰å¾…æœåŠ¡å°±ç»ª ---
-echo [3/3] ç­‰å¾…æœåŠ¡å°±ç»ªï¼ˆçº¦ 3 ç§’ï¼‰...
+REM --- µÈ´ý·þÎñ¾ÍÐ÷ ---
+echo [3/3] µÈ´ý·þÎñ¾ÍÐ÷£¨Ô¼ 3 Ãë£©...
 timeout /t 3 >nul
 
 echo.
 echo ============================================
-echo   æ‰“å¼€æµè§ˆå™¨ http://localhost:8000 ä½¿ç”¨
-echo   å…³é—­ "Store Sales Processor" çª—å£å¯åœæ­¢æœåŠ¡
+echo   ´ò¿ªä¯ÀÀÆ÷ http://localhost:8000 Ê¹ÓÃ
+echo   ¹Ø±Õ "Store Sales Processor" ´°¿Ú¿ÉÍ£Ö¹·þÎñ
 echo ============================================
 start "" http://localhost:8000
+
+echo.
+echo ============================================
+echo   ·þÎñÒÑÔÚºóÌ¨Æô¶¯£¨¶ÀÁ¢´°¿Ú "Store Sales Processor"£©¡£
+echo   °´ÈÎÒâ¼ü¹Ø±Õ±¾´°¿Ú¼´¿É£»²»»áÓ°ÏìºóÌ¨·þÎñÔËÐÐ¡£
+echo   Èôä¯ÀÀÆ÷Î´×Ô¶¯´ò¿ª£¬ÇëÊÖ¶¯·ÃÎÊ http://localhost:8000
+echo ============================================
+pause
 
 endlocal
