@@ -132,6 +132,9 @@
   tr.row-miss td:first-child{box-shadow:inset 3px 0 0 var(--bad);}
   tr.row-extra td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
   tr.row-both td:first-child{box-shadow:inset 3px 0 0 var(--ok);}
+  tr.row-eu-bad td:first-child{box-shadow:inset 3px 0 0 var(--bad);}
+  tr.row-eu-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok);}
+  tr.row-eu-noneu td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
 
   .foot{text-align:center;color:var(--sub);font-size:12px;margin-top:8px;}
 </style>
@@ -156,6 +159,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="sales">① 店铺销量处理</button>
     <button class="tab" data-tab="fba">② FBA需求差异分析</button>
+    <button class="tab" data-tab="eu">③ 多余欧洲区销量核对</button>
   </div>
 
   <!-- ============ 页签一：销量处理 ============ -->
@@ -291,6 +295,67 @@
       <div class="tablewrap"><table id="fbaDiffTable"></table></div>
     </section>
   </div>
+
+  <!-- ============ 页签三：多余欧洲区销量核对 ============ -->
+  <div class="panel hide" id="panel-eu">
+    <section class="card">
+      <h2>③ 多余欧洲区销量核对（差异表 × 销量快照 MSKU 累计）</h2>
+      <div class="meta">上传 <b>差异表</b>（页签②产出的 diff_result）与 <b>销量原始文件</b>（页签②同款 MSKU 级明细），核对「多余(FBA需求有·运营不满足条件)」行：
+        ① 是否都是欧洲区店铺；② 其 <b>FBA需求日均销量(加权)</b> 是否等于销量快照按 <b>店铺ASIN 跨 MSKU</b> 累加的加权日均（仅计正常销售）。</div>
+      <div class="three">
+        <div class="field">
+          <div class="drop" id="dropEuDiff">
+            <div class="drop-ico">📋</div>
+            <div class="drop-txt">差异表</div>
+            <div class="drop-sub">diff_result.xlsx（页签②产出）</div>
+            <input type="file" id="euDiffFile" accept=".xlsx,.xls" class="hide" />
+          </div>
+          <div class="meta" id="euDiffMeta">尚未选择文件</div>
+        </div>
+        <div class="field">
+          <div class="drop" id="dropEuSales">
+            <div class="drop-ico">📤</div>
+            <div class="drop-txt">销量原始文件</div>
+            <div class="drop-sub">点击或拖拽上传</div>
+            <input type="file" id="euSalesFile" accept=".xlsx,.xls" class="hide" />
+          </div>
+          <div class="meta" id="euSalesMeta">尚未选择文件</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:12px">口径：<b>快照MSKU累计销量(加权)</b> = 对同一 店铺ASIN，把所有「正常销售」MSKU 的 (w3×三天日均 + w7×七天日均 + w14×十四天日均)÷(w3+w7+w14) 求和（与页签②销量查表同一套算法）。
+        欧洲区判定：店铺名含 <b>EU</b> 标识，或国家码为 DE/FR/ES/IT/BE/NL/IE/SE/PL 等欧洲站点。一致阈值：|快照累计 − FBA需求首行| ≤ 0.01。</div>
+      <div class="meta" style="margin-top:12px">加权占比（与页签①同口径，默认 60/30/10）</div>
+      <div class="cfg weights">
+        <div class="field"><label>3天日均 占比(%)</label><input type="number" id="euW3" value="60" step="1" min="0" /></div>
+        <div class="field"><label>7天日均 占比(%)</label><input type="number" id="euW7" value="30" step="1" min="0" /></div>
+        <div class="field"><label>14天日均 占比(%)</label><input type="number" id="euW14" value="10" step="1" min="0" /></div>
+      </div>
+      <div class="meta" id="euNormReadout"></div>
+      <div class="actions" style="margin-top:16px">
+        <button class="primary big" id="euRunBtn" disabled>开始核对（差异表 + 销量快照）</button>
+      </div>
+    </section>
+
+    <section class="card" id="euStatusCard" style="display:none">
+      <h2>处理进度</h2>
+      <div class="status" id="euStatus">等待开始…</div>
+      <div class="bar" id="euBarWrap" style="display:none"><i id="euBar"></i></div>
+    </section>
+
+    <section class="card" id="euSummaryCard" style="display:none">
+      <h2>汇总</h2>
+      <div class="summary-grid" id="euSummary"></div>
+      <div class="dlrow">
+        <a id="dlEuLink" style="text-decoration:none"><button class="primary">⬇ 下载核对结果</button></a>
+      </div>
+    </section>
+
+    <section class="card" id="euDiffCard" style="display:none">
+      <h2>核对明细（前 200 行，下载文件含全部结果）</h2>
+      <div class="meta" id="euDiffMeta"></div>
+      <div class="tablewrap"><table id="euDiffTable"></table></div>
+    </section>
+  </div>
   <footer class="foot">店铺销量数据处理工具 · 文件由后台解析，结果可直接下载</footer>
 </main>
 
@@ -330,6 +395,7 @@ document.querySelectorAll('.tab').forEach(btn=>{
     const t = btn.getAttribute('data-tab');
     document.getElementById('panel-sales').classList.toggle('hide', t !== 'sales');
     document.getElementById('panel-fba').classList.toggle('hide', t !== 'fba');
+    document.getElementById('panel-eu').classList.toggle('hide', t !== 'eu');
   });
 });
 
@@ -687,6 +753,144 @@ function renderFbaDiff(header, rows){
   const body = rows.map(r=>{
     const st = r[1] || '';
     const cls = st.startsWith('缺失') ? 'row-miss' : (st.startsWith('多余') ? 'row-extra' : (st==='已生成' ? 'row-both' : ''));
+    return '<tr class="'+cls+'">'+header.map((c,i)=>`<td>${esc(r[i])}</td>`).join('')+'</tr>';
+  }).join('');
+  t.innerHTML = head + body;
+  card.style.display = 'block';
+}
+
+/* =========================================================
+ * 页签三：多余欧洲区销量核对
+ * =======================================================*/
+let euSid = null;
+let euFiles = { diff:null, sales:null };
+let euTaskId = null;
+let euPollTimer = null;
+
+function bindEuDrop(zoneId, inputId, metaId, slot){
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  zone.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', e=>{ if(e.target.files[0]) onEuFile(slot, e.target.files[0], metaId); });
+  ['dragover','dragenter'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.add('over');}));
+  ['dragleave','drop'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.remove('over');}));
+  zone.addEventListener('drop', e=>{ const f=e.dataTransfer.files[0]; if(f) onEuFile(slot, f, metaId); });
+}
+function onEuFile(slot, file, metaId){
+  euFiles[slot] = file;
+  const mb = (file.size/1024/1024).toFixed(1);
+  document.getElementById(metaId).innerHTML = `文件名 <b>${file.name}</b> ｜ 大小 <b>${mb} MB</b>`;
+  document.getElementById('euRunBtn').disabled = !(SERVER && euFiles.diff && euFiles.sales);
+}
+bindEuDrop('dropEuDiff','euDiffFile','euDiffMeta','diff');
+bindEuDrop('dropEuSales','euSalesFile','euSalesMeta','sales');
+
+function readEuWeights(){ return [num(document.getElementById('euW3').value), num(document.getElementById('euW7').value), num(document.getElementById('euW14').value)]; }
+function updateEuNorm(){
+  const [a,b,c] = readEuWeights();
+  const s = a+b+c;
+  const out = document.getElementById('euNormReadout');
+  if(s === 0){ out.innerHTML = '<span style="color:var(--bad)">⚠ 三个占比不能同时为 0</span>'; return; }
+  const p = x => (x/s*100).toFixed(1) + '%';
+  out.innerHTML = '归一化后实际占比：3天 <b>'+p(a)+'</b> ｜ 7天 <b>'+p(b)+'</b> ｜ 14天 <b>'+p(c)+'</b>';
+}
+['euW3','euW7','euW14'].forEach(id=>document.getElementById(id).addEventListener('input', updateEuNorm));
+updateEuNorm();
+
+document.getElementById('euRunBtn').addEventListener('click', ()=>{
+  if(!SERVER){ alert('未连接到本地服务，请先启动 start_server.bat'); return; }
+  if(!(euFiles.diff && euFiles.sales)){ alert('请先上传差异表与销量原始文件'); return; }
+  const [a,b,c] = readEuWeights();
+  if(a+b+c === 0){ alert('三个权重不能同时为 0'); return; }
+
+  document.getElementById('euStatusCard').style.display = 'block';
+  document.getElementById('euSummaryCard').style.display = 'none';
+  document.getElementById('euDiffCard').style.display = 'none';
+  document.getElementById('euBarWrap').style.display = 'block';
+  setEuStatus('<span class="spinner"></span>正在上传两个文件到后台…', 'run');
+
+  (async ()=>{
+    try{
+      euSid = (crypto.randomUUID ? crypto.randomUUID() : ('s'+Date.now()+Math.random().toString(16).slice(2)));
+      const slots = [['diff',euFiles.diff],['sales',euFiles.sales]];
+      let i = 0;
+      for(const [slot, file] of slots){
+        setEuStatus(`<span class="spinner"></span>正在上传第 ${i+1}/2 个文件：<b>${file.name}</b>…`, 'run');
+        const r = await fetch(`${API}/api/upload?sid=${enc(euSid)}&slot=${slot}`, { method:'POST', body: file });
+        if(!r.ok){ setEuStatus('⚠ 上传失败：HTTP '+r.status, 'err'); return; }
+        i++;
+      }
+      const parts = ['type=eu_check','sid='+enc(euSid),'w3='+enc(a),'w7='+enc(b),'w14='+enc(c)];
+      setEuStatus('<span class="spinner"></span>两文件已上传，后台正在核对（差异表 × 销量快照 MSKU 累计）…', 'run');
+      const r2 = await fetch(`${API}/api/tasks?`+parts.join('&'), { method:'POST' });
+      if(!r2.ok){ setEuStatus('⚠ 后台返回错误：HTTP '+r2.status, 'err'); return; }
+      const j2 = await r2.json();
+      euTaskId = j2.id;
+      euPoll();
+    }catch(e){
+      setEuStatus('⚠ 处理失败：'+e.message+'（确认服务已启动？）', 'err');
+    }
+  })();
+});
+
+function setEuStatus(html, kind){
+  const el = document.getElementById('euStatus');
+  el.innerHTML = html; el.className = 'status' + (kind ? ' ' + kind : '');
+}
+function euPoll(){
+  if(euPollTimer) clearInterval(euPollTimer);
+  euPollTimer = setInterval(async ()=>{
+    if(!euTaskId) return;
+    try{
+      const r = await fetch(API + '/api/tasks/' + euTaskId, {cache:'no-store'});
+      const j = await r.json();
+      if(j.status === 'running'){
+        const n = j.n_rows || 0;
+        setEuStatus('<span class="spinner"></span>后台核对中… 已处理 <b>'+n.toLocaleString()+'</b> 行多余数据', 'run');
+        document.getElementById('euBar').style.width = '55%';
+      }else if(j.status === 'done'){
+        clearInterval(euPollTimer); euPollTimer = null; euFinishDone(j);
+      }else if(j.status === 'error'){
+        clearInterval(euPollTimer); euPollTimer = null;
+        setEuStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        document.getElementById('euBarWrap').style.display = 'none';
+      }
+    }catch(e){}
+  }, 1000);
+}
+function euFinishDone(j){
+  document.getElementById('euBar').style.width = '100%';
+  const s = j.summary || {};
+  setEuStatus('✅ 核对完成！多余共 <b>'+(s.extra_total||0).toLocaleString()+'</b> 行 ｜ 欧洲 <b>'+(s.eu_total||0).toLocaleString()+'</b> ｜ 非欧洲 <b>'+(s.non_eu_total||0).toLocaleString()+'</b> ｜ 一致 <b>'+(s.consistent||0).toLocaleString()+'</b> ｜ 不一致 <b>'+(s.inconsistent||0).toLocaleString()+'</b> ｜ 快照缺失 <b>'+(s.snap_missing||0).toLocaleString()+'</b>', 'done');
+  document.getElementById('dlEuLink').href = `${API}/api/tasks/${euTaskId}/download`;
+  const sg = document.getElementById('euSummary');
+  const cards = [
+    {k:'多余总数', v:s.extra_total||0, cls:''},
+    {k:'欧洲区店铺', v:s.eu_total||0, cls:'ok'},
+    {k:'非欧洲区店铺', v:s.non_eu_total||0, cls:'warn'},
+    {k:'一致(快照=需求)', v:s.consistent||0, cls:'ok'},
+    {k:'不一致(快照≠需求)', v:s.inconsistent||0, cls:'bad'},
+    {k:'快照缺失(无此ASIN)', v:s.snap_missing||0, cls:'warn'},
+  ];
+  sg.innerHTML = cards.map(c=>`<div class="stat ${c.cls}"><div class="k">${c.k}</div><div class="v">${(c.v||0).toLocaleString()}</div></div>`).join('');
+  document.getElementById('euSummaryCard').style.display = 'block';
+  renderEuDiff(j.header || [], j.preview_rows || []);
+}
+function renderEuDiff(header, rows){
+  const card = document.getElementById('euDiffCard');
+  document.getElementById('euDiffMeta').innerHTML = `核对结果列数 <b>${header.length}</b> ｜ 预览前 <b>${rows.length}</b> 行（按 不一致→一致 排序，下载文件含全部结果）`;
+  const t = document.getElementById('euDiffTable');
+  if(!rows.length){ t.innerHTML='<tr><td class="empty">无多余数据</td></tr>'; card.style.display='block'; return; }
+  const head = '<tr>'+header.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';
+  const body = rows.map(r=>{
+    const consistent = r[5];
+    const eu = r[1];
+    let cls = '';
+    if(consistent === '否'){
+      cls = (eu === '否') ? 'row-eu-noneu' : 'row-eu-bad';
+    } else if(consistent === '是'){
+      cls = 'row-eu-ok';
+    }
     return '<tr class="'+cls+'">'+header.map((c,i)=>`<td>${esc(r[i])}</td>`).join('')+'</tr>';
   }).join('');
   t.innerHTML = head + body;
