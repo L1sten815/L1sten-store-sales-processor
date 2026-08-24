@@ -681,13 +681,15 @@ def process_alloc_check(in_path, out_path, on_progress=None, append_types=None):
          raw_i = 去尾取整(R * 销量_i / 总销量)，封顶 ≤ 预计分配量；
          剩余 = R - Σ(去尾封顶值)，按「预计分配量最大」（并列按 剩余容量=预计−已分 最大）
          依次补 min(剩余, 预计−已分)，直到分完。某周期库存能满足该周期全部预期则直接分满。
-      4) 周期 0 且 计算方式='追加'（默认按 需求类型 ∈ append_types 识别）：所有其他周期都分完后，
-         按剩余库存、按销量占比同样分配（去尾+封顶+剩余按预计最大）。
+      4) 周期 0 且 计算方式='追加'：所有其他周期都分完后，按剩余库存、按销量占比同样分配（去尾+封顶+剩余按预计最大）。
+         追加行识别：优先读「计算方式」列（值命中 append_types），缺该列时回退读「需求类型」列（方案①）；
+         两者都缺则无追加行。列名/白名单均可在前端「追加特征」框调整。
     """
     C = {
         'sku': 'SKU编码', 'inv': '本地SKU总可用库存', 'cyc': 'FBA备货周期',
         'exp': '预计分配量', 'sales': '日均销量(加权)', 'act': '实际分配量',
-        'demandType': '需求类型',   # 用于识别 追加 行（缺则全按需求处理）
+        'demandType': '需求类型',   # 识别 追加 行的回退列（方案①）
+        'calcMode': '计算方式',     # 识别 追加 行的优先列（方案②：系统导出模板加此列后无需改代码）
     }
     # 追加 特征：默认 需求类型='追加'，可由调用方覆盖
     if append_types is None:
@@ -703,7 +705,8 @@ def process_alloc_check(in_path, out_path, on_progress=None, append_types=None):
     iSku = fidx(header, C['sku']); iInv = fidx(header, C['inv'])
     iCyc = fidx(header, C['cyc']); iExp = fidx(header, C['exp'])
     iSales = fidx(header, C['sales']); iAct = fidx(header, C['act'])
-    iDemandType = fidx(header, C['demandType'])  # 可选
+    iDemandType = fidx(header, C['demandType'])  # 可选（回退）
+    iCalcMode = fidx(header, C['calcMode'])      # 可选（优先）；缺则回退 需求类型
     missing = [C[k] for k, i in (('sku', iSku), ('inv', iInv), ('cyc', iCyc),
                                  ('exp', iExp), ('sales', iSales), ('act', iAct)) if i < 0]
     if missing:
@@ -713,12 +716,18 @@ def process_alloc_check(in_path, out_path, on_progress=None, append_types=None):
         return int(round(fnum(r[iExp])))
 
     def is_append_row(r):
-        """周期 0 行 是否按 追加 处理（最后才分）。"""
+        """周期 0 行 是否按 追加 处理（最后才分）。
+        优先读『计算方式』列（方案②），缺该列时回退读『需求类型』列（方案①）；两者都缺则无追加行。"""
         if not append_set:
             return False
-        if iDemandType < 0 or r[iDemandType] is None:
-            return False
-        return str(r[iDemandType]).strip() in append_set
+        # 优先：计算方式 列（系统导出模板加了该列）
+        if iCalcMode >= 0 and r[iCalcMode] is not None:
+            if str(r[iCalcMode]).strip() in append_set:
+                return True
+        # 回退：需求类型 列（方案①）
+        if iDemandType >= 0 and r[iDemandType] is not None:
+            return str(r[iDemandType]).strip() in append_set
+        return False
 
     def allocate_group(rows, inv, result):
         """对一组行（同一周期或追加组）执行分配：全满足→按比例去尾封顶→剩余按预计最大。

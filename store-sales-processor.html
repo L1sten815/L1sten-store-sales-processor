@@ -373,11 +373,11 @@
         <input type="file" id="allocFile" accept=".xlsx,.xls" class="hide" />
       </div>
       <div class="meta" id="allocFileMeta">尚未选择文件</div>
-      <div class="note" style="margin-top:12px">分配口径（同 SKU 维度）：① <b>周期 0 且「需求」</b>（默认按下方"追加特征"以外的 需求类型）→ 必满足，全分满 = 预计；② <b>周期 > 0 升序</b> → 周期内按有预计分配量店铺的<b>销量占比</b>分配（去尾取整且 ≤ 预计），剩余优先给「预计分配量最大」；③ <b>周期 0 且「追加」</b>（默认按下方"追加特征"识别）→ 等①②都分完后，最后才按剩余库存同样按销量占比分配。逐行与「实际分配量」比对，差异 = 重算 − 实际。</div>
+      <div class="note" style="margin-top:12px">分配口径（同 SKU 维度）：① <b>周期 0 且「需求」</b>（默认按下方"追加特征"以外的 需求类型）→ 必满足，全分满 = 预计；② <b>周期 > 0 升序</b> → 周期内按有预计分配量店铺的<b>销量占比</b>分配（去尾取整且 ≤ 预计），剩余优先给「预计分配量最大」；③ <b>周期 0 且「追加」</b>（优先读「计算方式」列，缺则按「需求类型」列 / 下方"追加特征"识别）→ 等①②都分完后，最后才按剩余库存同样按销量占比分配。逐行与「实际分配量」比对，差异 = 重算 − 实际。</div>
       <div class="formrow" style="margin-top:14px">
-        <label for="allocAppendTypes" style="display:block;margin-bottom:6px;color:var(--sub);font-size:13px">视为「追加」的「需求类型」值（多个用顿号/逗号/换行分隔；留空=用默认 <b>追加</b>）</label>
+        <label for="allocAppendTypes" style="display:block;margin-bottom:6px;color:var(--sub);font-size:13px">视为「追加」的「计算方式 / 需求类型」值（多个用顿号/逗号/换行分隔；留空=用默认 <b>追加</b>）</label>
         <textarea id="allocAppendTypes" rows="1" placeholder="追加" style="width:100%;max-width:520px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;resize:vertical;font-family:inherit;">追加</textarea>
-        <div class="meta" id="allocAppendTypesMeta" style="margin-top:4px;color:var(--sub);font-size:12px">例：填 <code style="background:#f3f4f8;padding:1px 5px;border-radius:4px">追加</code> 表示把 需求类型='追加' 的周期 0 行视为「追加」（最后才分）。</div>
+        <div class="meta" id="allocAppendTypesMeta" style="margin-top:4px;color:var(--sub);font-size:12px">例：填 <code style="background:#f3f4f8;padding:1px 5px;border-radius:4px">追加</code> 表示把 计算方式='追加'（或回退 需求类型='追加'）的周期 0 行视为「追加」（最后才分）。导出含「计算方式」列时优先用该列，无需改代码。</div>
       </div>
       <div class="actions" style="margin-top:16px">
         <button class="primary big" id="allocRunBtn" disabled>开始核对（上传到后台）</button>
