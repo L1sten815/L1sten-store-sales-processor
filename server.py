@@ -6,6 +6,7 @@
 - POST /api/upload?sid=&slot=        暂存 FBA 差异分析所需的单个文件（销量/运营级别/FBA需求）
 - POST /api/tasks?type=fba&sid=      链式处理：销量结果 -> 运营级别结果 -> 差异比对（产出 3 份结果）
 - POST /api/tasks?type=eu_check&sid= 多余欧洲区销量核对（差异表 + 销量原始，按 MSKU 累计比对）
+- POST /api/tasks?type=alloc_check    上传「分配结果」Excel，按 SKU 分组重算 FBA 每周期分配量并比对实际分配量
 - GET  /api/tasks/<id>               查询任务状态/行数/错误/预览/汇总
 - GET  /api/tasks/<id>/download?which=sales|ops|diff  下载结果 xlsx
 - GET  /                          打开处理页面
@@ -668,6 +669,156 @@ def process_eu_mismatch_detail(diff_path, sales_raw_path, out_path, w3, w7, w14,
     return hdr_sum, n_mismatch, summary
 
 
+def process_alloc_check(in_path, out_path, on_progress=None):
+    """FBA 分配核对：上传「分配结果」Excel，按 SKU 分组、按备货周期从小到大重算每行的应分配量，
+    再逐行与文件中的「实际分配量」比对，标记 一致/不一致/缺实际分配量/无法核对(缺SKU)。
+    返回 (header, n, summary, preview)。
+
+    分配口径（已用示例 110 行 / 10 SKU 复现 10/10）：
+      1) 同 SKU 的库存池 = 本地SKU总可用库存（取整，同 SKU 各地值一致，取最大更稳）。
+      2) 备货周期 = 0 的行（导入需求，必满足）：全部分满 = 预计分配量，扣库存池。
+      3) 备货周期 > 0 按升序：R = 剩余库存；有预计分配量的店铺
+         raw_i = 去尾取整(R * 销量_i / 总销量)，封顶 ≤ 预计分配量；
+         剩余 = R - Σ(去尾封顶值)，按「预计分配量最大」（并列按 剩余容量=预计−已分 最大）
+         依次补 min(剩余, 预计−已分)，直到分完。某周期库存能满足该周期全部预期则直接分满。
+    """
+    C = {
+        'sku': 'SKU编码', 'inv': '本地SKU总可用库存', 'cyc': 'FBA备货周期',
+        'exp': '预计分配量', 'sales': '日均销量(加权)', 'act': '实际分配量',
+    }
+    header, data_iter = (_calamine_rows(in_path) if _try_calamine(in_path) else _openpyxl_rows(in_path))
+    def fidx(hdr, name):
+        for i, h in enumerate(hdr):
+            if h == name:
+                return i
+        return -1
+    iSku = fidx(header, C['sku']); iInv = fidx(header, C['inv'])
+    iCyc = fidx(header, C['cyc']); iExp = fidx(header, C['exp'])
+    iSales = fidx(header, C['sales']); iAct = fidx(header, C['act'])
+    missing = [C[k] for k, i in (('sku', iSku), ('inv', iInv), ('cyc', iCyc),
+                                 ('exp', iExp), ('sales', iSales), ('act', iAct)) if i < 0]
+    if missing:
+        raise ValueError("分配结果缺少必要列：" + "、".join(missing) + "（当前列：" + "、".join(header) + "）")
+
+    def cap_of(r):
+        return int(round(fnum(r[iExp])))
+
+    def compute_group(g):
+        """g: 同 SKU 的行对象列表。返回 id(row) -> 重算分配量(int)。"""
+        result = {}
+        if not g:
+            return result
+        avail = int(round(fnum(g[0][iInv])))
+        for r in g:                                  # 同 SKU 各行库存一致，取最大更稳
+            avail = max(avail, int(round(fnum(r[iInv]))))
+        inv = avail
+        # 周期 0：全分满 = 预计分配量，扣池
+        cyc0 = [r for r in g if fnum(r[iCyc]) == 0]
+        inv -= int(round(sum(fnum(r[iExp]) for r in cyc0)))
+        if inv < 0:
+            inv = 0
+        for r in cyc0:
+            result[id(r)] = cap_of(r)
+        # 周期 > 0 升序
+        cyc_pos = sorted({fnum(r[iCyc]) for r in g if fnum(r[iCyc]) > 0})
+        for c in cyc_pos:
+            all_c = [x for x in g if fnum(x[iCyc]) == c]
+            crows = [r for r in all_c if fnum(r[iExp]) > 0]
+            if not crows:
+                for r in all_c:
+                    result[id(r)] = 0
+                continue
+            sumexp = int(round(sum(fnum(r[iExp]) for r in crows)))
+            totsales = sum(fnum(r[iSales]) for r in crows)
+            if inv >= sumexp:
+                for r in crows:
+                    result[id(r)] = cap_of(r)
+                inv -= sumexp
+            else:
+                R = int(round(inv))
+                alloc = {}
+                for r in crows:
+                    raw = (R * fnum(r[iSales]) / totsales) if totsales > 0 else 0
+                    alloc[id(r)] = min(int(raw), cap_of(r))     # 去尾取整，封顶 ≤ 预计
+                leftover = R - sum(alloc.values())
+                # 剩余量优先给「预计分配量最大」（并列按 剩余容量=预计−已分 最大）
+                order = sorted(crows, key=lambda r: (cap_of(r), cap_of(r) - alloc[id(r)]), reverse=True)
+                for r in order:
+                    if leftover <= 0:
+                        break
+                    give = min(leftover, cap_of(r) - alloc[id(r)])
+                    if give > 0:
+                        alloc[id(r)] += give
+                        leftover -= give
+                inv = 0
+                for r in crows:
+                    result[id(r)] = alloc[id(r)]
+        for r in g:
+            result.setdefault(id(r), 0)
+        return result
+
+    # 读取并分组（缓冲全部行；分配结果文件通常远小于原始销量表，规模可接受）
+    groups = {}
+    for r in data_iter:
+        rr = list(r)
+        sku = str(rr[iSku]) if rr[iSku] is not None else ''
+        groups.setdefault(sku, []).append(rr)
+
+    out_header = list(header) + ['重算分配量', '实际分配量(原)', '是否一致', '差异']
+    preview_rows = []
+    n = 0
+    consistent = 0
+    inconsistent = 0
+    nosku = 0
+
+    def row_gen():
+        nonlocal n, consistent, inconsistent, nosku
+        for sku, g in groups.items():
+            if not sku:
+                # 无 SKU 的行无法分组核对，原样保留并标记
+                for r in g:
+                    actual_raw = r[iAct]
+                    cr_actual = (int(round(fnum(actual_raw))) if (actual_raw is not None and str(actual_raw).strip() != '') else '')
+                    cr = list(r) + ['', cr_actual, '无法核对(缺SKU)', '']
+                    yield cr
+                    n += 1; nosku += 1
+                    if len(preview_rows) < 200:
+                        preview_rows.append(cr)
+                continue
+            res = compute_group(g)
+            for r in g:
+                recomputed = res[id(r)]
+                actual_raw = r[iAct]
+                if actual_raw is None or str(actual_raw).strip() == '':
+                    cr_actual = ''; ok = '缺实际分配量'; cr_diff = ''
+                else:
+                    cr_actual = int(round(fnum(actual_raw)))
+                    cr_diff = recomputed - cr_actual
+                    if cr_diff == 0:
+                        ok = '一致'; consistent += 1
+                    else:
+                        ok = '不一致'; inconsistent += 1
+                cr = list(r) + [recomputed, cr_actual, ok, cr_diff]
+                yield cr
+                n += 1
+                if len(preview_rows) < 200:
+                    preview_rows.append(cr)
+            if on_progress and n % 5000 == 0:
+                on_progress(n)
+
+    tmp = _sheet_tmp()
+    _stream_sheet(tmp, out_header, row_gen())
+    _write_xlsx(out_path, tmp, 'sheet1')
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    if on_progress:
+        on_progress(n)
+    summary = {'total': n, 'consistent': consistent, 'inconsistent': inconsistent, 'nosku': nosku}
+    return out_header, n, summary, preview_rows
+
+
 def _try_calamine(path):
     try:
         from python_calamine import CalamineWorkbook
@@ -915,6 +1066,56 @@ class H(http.server.BaseHTTPRequestHandler):
             self._json(202, {'id': tid, 'status': 'running', 'n_rows': 0})
             return
 
+        # ---- FBA 分配核对（单文件：分配结果） ----
+        if typ == 'alloc_check':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+            except ValueError:
+                length = 0
+            body = self.rfile.read(length) if length else b''
+            fname = (qs_get(p, 'filename') or self.headers.get('X-Filename') or 'alloc.xlsx')
+            tid = uuid.uuid4().hex[:12]
+            in_path = os.path.join(HERE, '_allocin_' + tid + '.xlsx')
+            out_path = os.path.join(HERE, '_allocout_' + tid + '.xlsx')
+            open(in_path, 'wb').write(body)
+            task = {
+                'id': tid, 'status': 'running', 'type': 'alloc_check', 'filename': fname,
+                'n_rows': 0, 'header': None, 'preview_rows': None, 'summary': None,
+                'error_msg': None, 'input_path': in_path, 'output_path': out_path,
+                'download_name': 'alloc_check_result.xlsx',
+                'created': time.time(), 'finished': None,
+            }
+            with LOCK:
+                TASKS[tid] = task
+
+            def run():
+                try:
+                    def prog(n):
+                        with LOCK:
+                            task['n_rows'] = n
+                    h, n, summary, prev = process_alloc_check(in_path, out_path, on_progress=prog)
+                    with LOCK:
+                        task['status'] = 'done'
+                        task['n_rows'] = n
+                        task['header'] = h
+                        task['preview_rows'] = prev
+                        task['summary'] = summary
+                        task['finished'] = time.time()
+                    try:
+                        os.unlink(in_path)
+                    except OSError:
+                        pass
+                except Exception as e:
+                    import traceback
+                    with LOCK:
+                        task['status'] = 'error'
+                        task['error_msg'] = str(e)
+                        task['traceback'] = traceback.format_exc()
+                        task['finished'] = time.time()
+            threading.Thread(target=run, daemon=True).start()
+            self._json(202, {'id': tid, 'status': 'running', 'n_rows': 0})
+            return
+
         # ---- 销量处理（单文件） ----
         try:
             w3 = float(qs_get(p, 'w3') or DEF[0])
@@ -1138,6 +1339,8 @@ if __name__ == '__main__':
             extras.append('EU核对')
         if 'process_eu_mismatch_detail' in src:
             extras.append('EU明细')
+        if 'process_alloc_check' in src:
+            extras.append('分配核对')
     except Exception:
         pass
     print("当前版本： %s" % ('基础处理' if not extras else '基础处理 + ' + ' + '.join(extras)))

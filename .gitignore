@@ -4,6 +4,11 @@ _out_*.xlsx
 _sheet_*.tmp
 _up_*.xlsx
 _fba_*.xlsx
+_eu_*.xlsx
+_allocin_*.xlsx
+_allocout_*.xlsx
+*_result.xlsx
+start_server.log
 __pycache__/
 *.pyc
 venv/

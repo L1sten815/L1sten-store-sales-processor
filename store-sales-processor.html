@@ -135,6 +135,7 @@
   tr.row-eu-bad td:first-child{box-shadow:inset 3px 0 0 var(--bad);}
   tr.row-eu-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok);}
   tr.row-eu-noneu td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
+  tr.row-warn td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
 
   .foot{text-align:center;color:var(--sub);font-size:12px;margin-top:8px;}
 </style>
@@ -160,6 +161,7 @@
     <button class="tab active" data-tab="sales">① 店铺销量处理</button>
     <button class="tab" data-tab="fba">② FBA需求差异分析</button>
     <button class="tab" data-tab="eu">③ 多余欧洲区销量核对</button>
+    <button class="tab" data-tab="alloc">④ FBA分配核对</button>
   </div>
 
   <!-- ============ 页签一：销量处理 ============ -->
@@ -358,8 +360,39 @@
       <div class="tablewrap"><table id="euDiffTable"></table></div>
     </section>
   </div>
-  <footer class="foot">店铺销量数据处理工具 · 文件由后台解析，结果可直接下载</footer>
-</main>
+
+  <!-- ============ 页签四：FBA 分配核对 ============ -->
+  <div class="panel hide" id="panel-alloc">
+    <section class="card">
+      <h2>④ FBA 分配核对（上传分配结果 → 按 SKU 重算每周期分配量 → 比对实际分配量）</h2>
+      <div class="meta">上传「分配结果」Excel（含 店铺 / ASIN / MSKU / SKU编码 / FBA备货周期 / 预计分配量 / 日均销量(加权) / 实际分配量 等列）。系统按 <b>SKU 分组</b>、按 <b>备货周期从小到大</b> 重算每行应分得的量，再逐行与文件里的「实际分配量」对比，标记 <span class="st-both">一致</span> / <span class="st-miss">不一致</span> 并给出差异。</div>
+      <div class="drop" id="dropAlloc">
+        <div class="drop-ico">📤</div>
+        <div class="drop-txt">点击或拖拽「分配结果」Excel 到此处</div>
+        <div class="drop-sub">支持 .xlsx / .xls</div>
+        <input type="file" id="allocFile" accept=".xlsx,.xls" class="hide" />
+      </div>
+      <div class="meta" id="allocFileMeta">尚未选择文件</div>
+      <div class="note" style="margin-top:12px">分配口径（与页签②同套）：同 SKU 库存先分给 <b>备货周期=0</b>（导入需求，必满足）；随后按周期升序，周期内按「有预计分配量的店铺」的 <b>销量占比</b> 分配（去尾取整，且 ≤ 预计分配量）；库存不足时按销量占比分摊，剩余量优先给「预计分配量最大」的店铺。重算值逐行与「实际分配量」比对，差异 = 重算 − 实际。</div>
+      <div class="actions" style="margin-top:16px">
+        <button class="primary big" id="allocRunBtn" disabled>开始核对（上传到后台）</button>
+      </div>
+    </section>
+
+    <section class="card" id="allocResultCard" style="display:none">
+      <h2>处理进度与结果</h2>
+      <div class="status" id="allocStatus">等待开始…</div>
+      <div class="bar" id="allocBarWrap" style="display:none"><i id="allocBar"></i></div>
+      <div class="summary-grid" id="allocSummary" style="margin-top:14px"></div>
+      <div class="dlrow">
+        <a id="allocDlLink" style="text-decoration:none;display:none"><button class="primary big">⬇ 下载核对结果</button></a>
+      </div>
+      <div class="meta" id="allocPreviewMeta" style="margin-top:14px"></div>
+      <div class="tablewrap"><table id="allocPreviewTable"></table></div>
+    </section>
+  </div>
+
+  <footer class="foot">店铺销量数据处理工具 · 文件由后台解析，结果可直接下载</footer></main>
 
 <script>
 /* =========================================================
@@ -398,6 +431,7 @@ document.querySelectorAll('.tab').forEach(btn=>{
     document.getElementById('panel-sales').classList.toggle('hide', t !== 'sales');
     document.getElementById('panel-fba').classList.toggle('hide', t !== 'fba');
     document.getElementById('panel-eu').classList.toggle('hide', t !== 'eu');
+    document.getElementById('panel-alloc').classList.toggle('hide', t !== 'alloc');
   });
 });
 
@@ -437,6 +471,7 @@ function detectMode(){
       }
       document.getElementById('connNote').innerHTML = connMsg;
       document.getElementById('runBtn').disabled = !currentFile;
+      document.getElementById('allocRunBtn').disabled = !allocFile;
     }else{
       SERVER = false; API = '';
       badge.textContent = '未连接';
@@ -445,6 +480,7 @@ function detectMode(){
         '<div class="warnbox">⚠️ <b>未检测到本地服务。</b>本工具需要后台服务来解析文件（大文件无法在浏览器内解析）。'+
         '请关闭本页面，双击 <b>start_server.bat</b> 启动服务后，访问 <b>http://localhost:8000</b> 重新打开本页。</div>';
       document.getElementById('runBtn').disabled = true;
+      document.getElementById('allocRunBtn').disabled = true;
     }
     updateFbaBtn();
   })();
@@ -943,6 +979,114 @@ function renderEuDiff(header, rows){
   }).join('');
   t.innerHTML = head + body;
   card.style.display = 'block';
+}
+
+// ============ 页签四：FBA 分配核对 ============
+let allocFile = null;
+let allocTaskId = null;
+let allocPollTimer = null;
+
+const dropAlloc = document.getElementById('dropAlloc');
+const allocInput = document.getElementById('allocFile');
+dropAlloc.addEventListener('click', ()=>allocInput.click());
+allocInput.addEventListener('change', e=>{ if(e.target.files[0]) onAllocFile(e.target.files[0]); });
+['dragover','dragenter'].forEach(ev=>dropAlloc.addEventListener(ev, e=>{ e.preventDefault(); dropAlloc.classList.add('over'); }));
+['dragleave','drop'].forEach(ev=>dropAlloc.addEventListener(ev, e=>{ e.preventDefault(); dropAlloc.classList.remove('over'); }));
+dropAlloc.addEventListener('drop', e=>{ const f = e.dataTransfer.files[0]; if(f) onAllocFile(f); });
+
+function onAllocFile(file){
+  allocFile = file;
+  const mb = (file.size/1024/1024).toFixed(1);
+  document.getElementById('allocFileMeta').innerHTML = `文件名 <b>${esc(file.name)}</b> ｜ 大小 <b>${mb} MB</b>`;
+  document.getElementById('allocRunBtn').disabled = !SERVER;
+  allocTaskId = null;
+  if(allocPollTimer){ clearInterval(allocPollTimer); allocPollTimer = null; }
+  document.getElementById('allocResultCard').style.display = 'none';
+}
+function setAllocStatus(html, kind){
+  const el = document.getElementById('allocStatus');
+  el.innerHTML = html; el.className = 'status' + (kind ? ' ' + kind : '');
+}
+document.getElementById('allocRunBtn').addEventListener('click', ()=>{
+  if(!SERVER){ alert('未连接到本地服务，请先启动 start_server.bat'); return; }
+  if(!allocFile){ alert('请先选择文件'); return; }
+  document.getElementById('allocResultCard').style.display = 'block';
+  document.getElementById('allocDlLink').style.display = 'none';
+  document.getElementById('allocBarWrap').style.display = 'block';
+  document.getElementById('allocBar').style.width = '10%';
+  document.getElementById('allocSummary').innerHTML = '';
+  setAllocStatus('<span class="spinner"></span>正在上传文件到后台…', 'run');
+  (async ()=>{
+    try{
+      const parts = ['type=alloc_check', 'filename='+enc(allocFile.name)];
+      const r = await fetch(API + '/api/tasks?' + parts.join('&'), { method:'POST', body: allocFile });
+      if(!r.ok){ setAllocStatus('⚠ 后台返回错误：HTTP '+r.status, 'err'); return; }
+      const j = await r.json();
+      allocTaskId = j.id;
+      setAllocStatus('<span class="spinner"></span>已上传，后台核对中…', 'run');
+      allocPoll();
+    }catch(e){
+      setAllocStatus('⚠ 上传失败：'+e.message+'（确认服务已启动？）', 'err');
+    }
+  })();
+});
+function allocPoll(){
+  if(allocPollTimer) clearInterval(allocPollTimer);
+  allocPollTimer = setInterval(async ()=>{
+    if(!allocTaskId) return;
+    try{
+      const r = await fetch(API + '/api/tasks/' + allocTaskId, {cache:'no-store'});
+      const j = await r.json();
+      if(j.status === 'running'){
+        const n = j.n_rows || 0;
+        setAllocStatus('<span class="spinner"></span>后台核对中… 已处理 <b>'+n.toLocaleString()+'</b> 行', 'run');
+        document.getElementById('allocBar').style.width = '60%';
+      }else if(j.status === 'done'){
+        clearInterval(allocPollTimer); allocPollTimer = null; allocFinishDone(j);
+      }else if(j.status === 'error'){
+        clearInterval(allocPollTimer); allocPollTimer = null;
+        setAllocStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        document.getElementById('allocBarWrap').style.display = 'none';
+      }
+    }catch(e){}
+  }, 1000);
+}
+function allocFinishDone(j){
+  document.getElementById('allocBar').style.width = '100%';
+  const s = j.summary || {};
+  let msg = `✅ 核对完成！共 <b>${(s.total||0).toLocaleString()}</b> 行 ｜ 一致 <b style="color:var(--ok)">${(s.consistent||0).toLocaleString()}</b> ｜ 不一致 <b style="color:var(--bad)">${(s.inconsistent||0).toLocaleString()}</b>`;
+  if(s.nosku) msg += ` ｜ 缺SKU无法核对 <b style="color:var(--warn)">${(s.nosku||0).toLocaleString()}</b>`;
+  setAllocStatus(msg, 'done');
+  const link = document.getElementById('allocDlLink');
+  link.href = API + '/api/tasks/' + allocTaskId + '/download';
+  link.style.display = 'inline-block';
+  const sg = document.getElementById('allocSummary');
+  const cards = [
+    {k:'总核对行数', v:s.total||0, cls:''},
+    {k:'一致', v:s.consistent||0, cls:'ok'},
+    {k:'不一致', v:s.inconsistent||0, cls:'bad'},
+    {k:'缺SKU无法核对', v:s.nosku||0, cls:'warn'},
+  ];
+  sg.innerHTML = cards.map(c=>`<div class="stat ${c.cls}"><div class="k">${c.k}</div><div class="v">${(c.v||0).toLocaleString()}</div></div>`).join('');
+  renderAllocPreview(j.header || [], j.preview_rows || []);
+}
+function renderAllocPreview(header, rows){
+  document.getElementById('allocPreviewMeta').innerHTML = `核对结果列数 <b>${header.length}</b> ｜ 预览前 <b>${rows.length}</b> 行（下载文件含全部结果）`;
+  const t = document.getElementById('allocPreviewTable');
+  if(!rows.length){ t.innerHTML='<tr><td class="empty">无预览数据</td></tr>'; return; }
+  let ci = header.indexOf('是否一致');
+  const head = '<tr>'+header.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';
+  const body = rows.map(r=>{
+    let cls = '';
+    if(ci >= 0){
+      const st = r[ci];
+      if(st === '不一致') cls = 'row-miss';
+      else if(st === '一致') cls = 'row-both';
+      else if(st === '缺实际分配量' || st === '无法核对(缺SKU)') cls = 'row-warn';
+    }
+    return '<tr class="'+cls+'">'+header.map((c,i)=>`<td>${esc(r[i])}</td>`).join('')+'</tr>';
+  }).join('');
+  t.innerHTML = head + body;
 }
 
 detectMode();
