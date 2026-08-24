@@ -669,23 +669,31 @@ def process_eu_mismatch_detail(diff_path, sales_raw_path, out_path, w3, w7, w14,
     return hdr_sum, n_mismatch, summary
 
 
-def process_alloc_check(in_path, out_path, on_progress=None):
+def process_alloc_check(in_path, out_path, on_progress=None, append_types=None):
     """FBA 分配核对：上传「分配结果」Excel，按 SKU 分组、按备货周期从小到大重算每行的应分配量，
     再逐行与文件中的「实际分配量」比对，标记 一致/不一致/缺实际分配量/无法核对(缺SKU)。
     返回 (header, n, summary, preview)。
 
-    分配口径（已用示例 110 行 / 10 SKU 复现 10/10）：
+    分配口径（已用示例 110 行 / 10 SKU 复现 10/10；2026-08-24 加"追加"识别）：
       1) 同 SKU 的库存池 = 本地SKU总可用库存（取整，同 SKU 各地值一致，取最大更稳）。
-      2) 备货周期 = 0 的行（导入需求，必满足）：全部分满 = 预计分配量，扣库存池。
-      3) 备货周期 > 0 按升序：R = 剩余库存；有预计分配量的店铺
+      2) 周期 0 且 计算方式='需求'（默认按 需求类型 != append_types 识别）：先全分满 = 预计，扣库存池。
+      3) 周期 > 0 按升序：R = 剩余库存；有预计分配量的店铺
          raw_i = 去尾取整(R * 销量_i / 总销量)，封顶 ≤ 预计分配量；
          剩余 = R - Σ(去尾封顶值)，按「预计分配量最大」（并列按 剩余容量=预计−已分 最大）
          依次补 min(剩余, 预计−已分)，直到分完。某周期库存能满足该周期全部预期则直接分满。
+      4) 周期 0 且 计算方式='追加'（默认按 需求类型 ∈ append_types 识别）：所有其他周期都分完后，
+         按剩余库存、按销量占比同样分配（去尾+封顶+剩余按预计最大）。
     """
     C = {
         'sku': 'SKU编码', 'inv': '本地SKU总可用库存', 'cyc': 'FBA备货周期',
         'exp': '预计分配量', 'sales': '日均销量(加权)', 'act': '实际分配量',
+        'demandType': '需求类型',   # 用于识别 追加 行（缺则全按需求处理）
     }
+    # 追加 特征：默认 需求类型='追加'，可由调用方覆盖
+    if append_types is None:
+        append_types = ['追加']
+    append_set = set(s.strip() for s in append_types if s and str(s).strip())
+
     header, data_iter = (_calamine_rows(in_path) if _try_calamine(in_path) else _openpyxl_rows(in_path))
     def fidx(hdr, name):
         for i, h in enumerate(hdr):
@@ -695,6 +703,7 @@ def process_alloc_check(in_path, out_path, on_progress=None):
     iSku = fidx(header, C['sku']); iInv = fidx(header, C['inv'])
     iCyc = fidx(header, C['cyc']); iExp = fidx(header, C['exp'])
     iSales = fidx(header, C['sales']); iAct = fidx(header, C['act'])
+    iDemandType = fidx(header, C['demandType'])  # 可选
     missing = [C[k] for k, i in (('sku', iSku), ('inv', iInv), ('cyc', iCyc),
                                  ('exp', iExp), ('sales', iSales), ('act', iAct)) if i < 0]
     if missing:
@@ -702,6 +711,48 @@ def process_alloc_check(in_path, out_path, on_progress=None):
 
     def cap_of(r):
         return int(round(fnum(r[iExp])))
+
+    def is_append_row(r):
+        """周期 0 行 是否按 追加 处理（最后才分）。"""
+        if not append_set:
+            return False
+        if iDemandType < 0 or r[iDemandType] is None:
+            return False
+        return str(r[iDemandType]).strip() in append_set
+
+    def allocate_group(rows, inv, result):
+        """对一组行（同一周期或追加组）执行分配：全满足→按比例去尾封顶→剩余按预计最大。
+        返回更新后的 inv。"""
+        crows = [r for r in rows if fnum(r[iExp]) > 0]
+        if not crows:
+            for r in rows:
+                result[id(r)] = 0
+            return inv
+        sumexp = int(round(sum(fnum(r[iExp]) for r in crows)))
+        totsales = sum(fnum(r[iSales]) for r in crows)
+        if inv >= sumexp:
+            for r in crows:
+                result[id(r)] = cap_of(r)
+            inv -= sumexp
+        else:
+            R = int(round(inv))
+            alloc = {}
+            for r in crows:
+                raw = (R * fnum(r[iSales]) / totsales) if totsales > 0 else 0
+                alloc[id(r)] = min(int(raw), cap_of(r))     # 去尾取整，封顶 ≤ 预计
+            leftover = R - sum(alloc.values())
+            order = sorted(crows, key=lambda r: (cap_of(r), cap_of(r) - alloc[id(r)]), reverse=True)
+            for r in order:
+                if leftover <= 0:
+                    break
+                give = min(leftover, cap_of(r) - alloc[id(r)])
+                if give > 0:
+                    alloc[id(r)] += give
+                    leftover -= give
+            inv = 0
+            for r in crows:
+                result[id(r)] = alloc[id(r)]
+        return inv
 
     def compute_group(g):
         """g: 同 SKU 的行对象列表。返回 id(row) -> 重算分配量(int)。"""
@@ -712,47 +763,22 @@ def process_alloc_check(in_path, out_path, on_progress=None):
         for r in g:                                  # 同 SKU 各行库存一致，取最大更稳
             avail = max(avail, int(round(fnum(r[iInv]))))
         inv = avail
-        # 周期 0：全分满 = 预计分配量，扣池
-        cyc0 = [r for r in g if fnum(r[iCyc]) == 0]
-        inv -= int(round(sum(fnum(r[iExp]) for r in cyc0)))
+        # 步骤 1：周期 0 且 非追加（=需求），先全分满 = 预计，扣池
+        cyc0_demand = [r for r in g if fnum(r[iCyc]) == 0 and not is_append_row(r)]
+        inv -= int(round(sum(fnum(r[iExp]) for r in cyc0_demand)))
         if inv < 0:
             inv = 0
-        for r in cyc0:
+        for r in cyc0_demand:
             result[id(r)] = cap_of(r)
-        # 周期 > 0 升序
+        # 步骤 2：周期 > 0 升序
         cyc_pos = sorted({fnum(r[iCyc]) for r in g if fnum(r[iCyc]) > 0})
         for c in cyc_pos:
-            all_c = [x for x in g if fnum(x[iCyc]) == c]
-            crows = [r for r in all_c if fnum(r[iExp]) > 0]
-            if not crows:
-                for r in all_c:
-                    result[id(r)] = 0
-                continue
-            sumexp = int(round(sum(fnum(r[iExp]) for r in crows)))
-            totsales = sum(fnum(r[iSales]) for r in crows)
-            if inv >= sumexp:
-                for r in crows:
-                    result[id(r)] = cap_of(r)
-                inv -= sumexp
-            else:
-                R = int(round(inv))
-                alloc = {}
-                for r in crows:
-                    raw = (R * fnum(r[iSales]) / totsales) if totsales > 0 else 0
-                    alloc[id(r)] = min(int(raw), cap_of(r))     # 去尾取整，封顶 ≤ 预计
-                leftover = R - sum(alloc.values())
-                # 剩余量优先给「预计分配量最大」（并列按 剩余容量=预计−已分 最大）
-                order = sorted(crows, key=lambda r: (cap_of(r), cap_of(r) - alloc[id(r)]), reverse=True)
-                for r in order:
-                    if leftover <= 0:
-                        break
-                    give = min(leftover, cap_of(r) - alloc[id(r)])
-                    if give > 0:
-                        alloc[id(r)] += give
-                        leftover -= give
-                inv = 0
-                for r in crows:
-                    result[id(r)] = alloc[id(r)]
+            rows = [r for r in g if fnum(r[iCyc]) == c]
+            inv = allocate_group(rows, inv, result)
+        # 步骤 3：周期 0 且 追加（=追加），最后才分（按销量占比）
+        cyc0_append = [r for r in g if fnum(r[iCyc]) == 0 and is_append_row(r)]
+        if cyc0_append:
+            inv = allocate_group(cyc0_append, inv, result)
         for r in g:
             result.setdefault(id(r), 0)
         return result
@@ -770,9 +796,10 @@ def process_alloc_check(in_path, out_path, on_progress=None):
     consistent = 0
     inconsistent = 0
     nosku = 0
+    append_rows_count = 0   # 被识别为 追加 的行数（用于汇总展示）
 
     def row_gen():
-        nonlocal n, consistent, inconsistent, nosku
+        nonlocal n, consistent, inconsistent, nosku, append_rows_count
         for sku, g in groups.items():
             if not sku:
                 # 无 SKU 的行无法分组核对，原样保留并标记
@@ -798,6 +825,8 @@ def process_alloc_check(in_path, out_path, on_progress=None):
                         ok = '一致'; consistent += 1
                     else:
                         ok = '不一致'; inconsistent += 1
+                if is_append_row(r):
+                    append_rows_count += 1
                 cr = list(r) + [recomputed, cr_actual, ok, cr_diff]
                 yield cr
                 n += 1
@@ -815,7 +844,11 @@ def process_alloc_check(in_path, out_path, on_progress=None):
         pass
     if on_progress:
         on_progress(n)
-    summary = {'total': n, 'consistent': consistent, 'inconsistent': inconsistent, 'nosku': nosku}
+    summary = {
+        'total': n, 'consistent': consistent, 'inconsistent': inconsistent, 'nosku': nosku,
+        'append_rows': append_rows_count,
+        'append_types': sorted(append_set) if append_set else [],
+    }
     return out_header, n, summary, preview_rows
 
 
@@ -926,6 +959,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 'diff_header': t.get('diff_header'),
                 'diff_preview': t.get('diff_preview'),
                 'level_info': t.get('level_info'),
+                'append_types': t.get('append_types'),
                 'created': t.get('created'),
                 'finished': t.get('finished'),
             })
@@ -1074,6 +1108,13 @@ class H(http.server.BaseHTTPRequestHandler):
                 length = 0
             body = self.rfile.read(length) if length else b''
             fname = (qs_get(p, 'filename') or self.headers.get('X-Filename') or 'alloc.xlsx')
+            # 追加特征：可重复传 appendTypes=追加&appendTypes=...，内部再按 [,\s;；、]+ 拆分
+            append_types_raw = []
+            for raw in qs_get_list(p, 'appendTypes'):
+                for part in re.split(r'[,\s;；、]+', raw):
+                    part = part.strip()
+                    if part:
+                        append_types_raw.append(part)
             tid = uuid.uuid4().hex[:12]
             in_path = os.path.join(HERE, '_allocin_' + tid + '.xlsx')
             out_path = os.path.join(HERE, '_allocout_' + tid + '.xlsx')
@@ -1083,6 +1124,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 'n_rows': 0, 'header': None, 'preview_rows': None, 'summary': None,
                 'error_msg': None, 'input_path': in_path, 'output_path': out_path,
                 'download_name': 'alloc_check_result.xlsx',
+                'append_types': append_types_raw,   # 透传，便于前端回显
                 'created': time.time(), 'finished': None,
             }
             with LOCK:
@@ -1093,7 +1135,9 @@ class H(http.server.BaseHTTPRequestHandler):
                     def prog(n):
                         with LOCK:
                             task['n_rows'] = n
-                    h, n, summary, prev = process_alloc_check(in_path, out_path, on_progress=prog)
+                    h, n, summary, prev = process_alloc_check(
+                        in_path, out_path, on_progress=prog,
+                        append_types=(append_types_raw or None))  # 空列表=用默认 ['追加']
                     with LOCK:
                         task['status'] = 'done'
                         task['n_rows'] = n
@@ -1341,6 +1385,8 @@ if __name__ == '__main__':
             extras.append('EU明细')
         if 'process_alloc_check' in src:
             extras.append('分配核对')
+        if 'append_types' in src and 'is_append_row' in src:
+            extras.append('追加识别')
     except Exception:
         pass
     print("当前版本： %s" % ('基础处理' if not extras else '基础处理 + ' + ' + '.join(extras)))

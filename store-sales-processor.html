@@ -373,7 +373,12 @@
         <input type="file" id="allocFile" accept=".xlsx,.xls" class="hide" />
       </div>
       <div class="meta" id="allocFileMeta">尚未选择文件</div>
-      <div class="note" style="margin-top:12px">分配口径（与页签②同套）：同 SKU 库存先分给 <b>备货周期=0</b>（导入需求，必满足）；随后按周期升序，周期内按「有预计分配量的店铺」的 <b>销量占比</b> 分配（去尾取整，且 ≤ 预计分配量）；库存不足时按销量占比分摊，剩余量优先给「预计分配量最大」的店铺。重算值逐行与「实际分配量」比对，差异 = 重算 − 实际。</div>
+      <div class="note" style="margin-top:12px">分配口径（同 SKU 维度）：① <b>周期 0 且「需求」</b>（默认按下方"追加特征"以外的 需求类型）→ 必满足，全分满 = 预计；② <b>周期 > 0 升序</b> → 周期内按有预计分配量店铺的<b>销量占比</b>分配（去尾取整且 ≤ 预计），剩余优先给「预计分配量最大」；③ <b>周期 0 且「追加」</b>（默认按下方"追加特征"识别）→ 等①②都分完后，最后才按剩余库存同样按销量占比分配。逐行与「实际分配量」比对，差异 = 重算 − 实际。</div>
+      <div class="formrow" style="margin-top:14px">
+        <label for="allocAppendTypes" style="display:block;margin-bottom:6px;color:var(--sub);font-size:13px">视为「追加」的「需求类型」值（多个用顿号/逗号/换行分隔；留空=用默认 <b>追加</b>）</label>
+        <textarea id="allocAppendTypes" rows="1" placeholder="追加" style="width:100%;max-width:520px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;resize:vertical;font-family:inherit;">追加</textarea>
+        <div class="meta" id="allocAppendTypesMeta" style="margin-top:4px;color:var(--sub);font-size:12px">例：填 <code style="background:#f3f4f8;padding:1px 5px;border-radius:4px">追加</code> 表示把 需求类型='追加' 的周期 0 行视为「追加」（最后才分）。</div>
+      </div>
       <div class="actions" style="margin-top:16px">
         <button class="primary big" id="allocRunBtn" disabled>开始核对（上传到后台）</button>
       </div>
@@ -1019,6 +1024,12 @@ document.getElementById('allocRunBtn').addEventListener('click', ()=>{
   (async ()=>{
     try{
       const parts = ['type=alloc_check', 'filename='+enc(allocFile.name)];
+      // 追加特征：多值用 [,\s;；、]+ 拆分，逐个作为 appendTypes= 参数
+      const txt = document.getElementById('allocAppendTypes').value || '';
+      for (const p of txt.split(/[,\s;；、]+/)) {
+        const v = p.trim();
+        if (v) parts.push('appendTypes=' + enc(v));
+      }
       const r = await fetch(API + '/api/tasks?' + parts.join('&'), { method:'POST', body: allocFile });
       if(!r.ok){ setAllocStatus('⚠ 后台返回错误：HTTP '+r.status, 'err'); return; }
       const j = await r.json();
@@ -1054,7 +1065,9 @@ function allocPoll(){
 function allocFinishDone(j){
   document.getElementById('allocBar').style.width = '100%';
   const s = j.summary || {};
+  const appendTypes = (j.append_types && j.append_types.length) ? j.append_types : (s.append_types || []);
   let msg = `✅ 核对完成！共 <b>${(s.total||0).toLocaleString()}</b> 行 ｜ 一致 <b style="color:var(--ok)">${(s.consistent||0).toLocaleString()}</b> ｜ 不一致 <b style="color:var(--bad)">${(s.inconsistent||0).toLocaleString()}</b>`;
+  if(s.append_rows) msg += ` ｜ <span style="color:#67748a">追加行 <b>${(s.append_rows||0).toLocaleString()}</b></span>`;
   if(s.nosku) msg += ` ｜ 缺SKU无法核对 <b style="color:var(--warn)">${(s.nosku||0).toLocaleString()}</b>`;
   setAllocStatus(msg, 'done');
   const link = document.getElementById('allocDlLink');
@@ -1065,9 +1078,19 @@ function allocFinishDone(j){
     {k:'总核对行数', v:s.total||0, cls:''},
     {k:'一致', v:s.consistent||0, cls:'ok'},
     {k:'不一致', v:s.inconsistent||0, cls:'bad'},
+    {k:'追加行（最后分）', v:s.append_rows||0, cls:'warn'},
     {k:'缺SKU无法核对', v:s.nosku||0, cls:'warn'},
   ];
   sg.innerHTML = cards.map(c=>`<div class="stat ${c.cls}"><div class="k">${c.k}</div><div class="v">${(c.v||0).toLocaleString()}</div></div>`).join('');
+  // 在预览元信息里追加"追加特征"回显
+  const metaEl = document.getElementById('allocPreviewMeta');
+  const oldHtml = metaEl.innerHTML;
+  const appendInfo = appendTypes && appendTypes.length
+    ? ` ｜ 追加特征：<code style="background:#f3f4f8;padding:1px 5px;border-radius:4px">${appendTypes.map(esc).join('、')}</code>`
+    : '';
+  if (oldHtml && !oldHtml.includes('追加特征')) {
+    metaEl.innerHTML = oldHtml + appendInfo;
+  }
   renderAllocPreview(j.header || [], j.preview_rows || []);
 }
 function renderAllocPreview(header, rows){
