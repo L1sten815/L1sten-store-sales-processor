@@ -248,7 +248,7 @@
             <input type="checkbox" id="rulesMode" /> 开启：按运营级别绑定不同备货公式（6窗口 / 固定窗口）
           </label>
           <div id="rulesCfgBox" style="display:none;margin-top:12px;width:100%">
-            <p class="note" style="margin:0 0 10px">每个运营级别可绑定一条「备货规则」：组合公式（6窗口权重，运行时自动归一化）或固定窗口（直接取某窗口日均）。未绑定的运营级别使用「默认规则」。下端可上传「运营级别映射表」把 店铺+ASIN 关联到运营级别。配置自动存本机，可导出/导入 JSON。开启后 页签②/③ 自动用新加权值——前14天没销量但 30/60/90 天有销量会正确生成需求，其他页签无需改动。</p>
+            <p class="note" style="margin:0 0 10px">每个运营级别可绑定一条「备货规则」：组合公式（6窗口权重，运行时自动归一化）或固定窗口（直接取某窗口日均）。<b>未绑定的运营级别不生成需求</b>，页签②中会被标记为「未绑定规则(运营级别未选)」。下端可上传「运营级别映射表」把 店铺+ASIN 关联到运营级别。配置自动存本机，可导出/导入 JSON。开启后 页签②/③ 自动用新加权值——前14天没销量但 30/60/90 天有销量会正确生成需求，其他页签无需改动。</p>
 
             <div style="font-weight:600;margin:10px 0 6px">备货规则</div>
             <div id="rulesList"></div>
@@ -261,10 +261,6 @@
             <div id="bindList"></div>
             <button type="button" id="addBind" class="mini">+ 新增绑定</button>
 
-            <div class="cfg" style="margin-top:12px">
-              <div class="field"><label>默认规则（未绑定运营级别时）</label><select id="defaultRule"></select></div>
-              <div class="field"><label>默认运营级别（映射表未命中时用）</label><input type="text" id="defaultOpLevel" placeholder="留空=用默认规则" /></div>
-            </div>
 
             <div style="font-weight:600;margin:14px 0 6px">运营级别映射表（可选）</div>
             <div class="drop" id="dropMapping">
@@ -672,7 +668,6 @@ const DEFAULT_RULES_CFG = {
     "美国-30天日均-[5~20]": ["60天测试日均"], "美国-30天日均-[20+]": ["60天测试日均"],
     "加拿大-30天日均-[0~0.5]": ["45天测试"], "加拿大-30天日均-[0.5~20]": ["60天测试日均"],
   },
-  default_rule: "30天测试", default_op_level: "",
 };
 // 前端推导规则「天数」（与后端 _rule_days 保持一致）：显式 days 优先→固定窗=fixed_window→组合窗=权重最大窗口
 function deriveDays(r){
@@ -701,18 +696,7 @@ const rulesModeEl = document.getElementById('rulesMode');
 const rulesCfgBox = document.getElementById('rulesCfgBox');
 const rulesListEl = document.getElementById('rulesList');
 const bindListEl = document.getElementById('bindList');
-const defaultRuleEl = document.getElementById('defaultRule');
 
-function renderDefaultRuleOptions(){
-  const cur = defaultRuleEl.value;
-  defaultRuleEl.innerHTML = '';
-  rulesCfg.rules.forEach(r=>{
-    const o = document.createElement('option');
-    o.value = r.name; o.textContent = r.name;
-    defaultRuleEl.appendChild(o);
-  });
-  defaultRuleEl.value = (rulesCfg.default_rule && rulesCfg.rules.some(r=>r.name===rulesCfg.default_rule)) ? rulesCfg.default_rule : (rulesCfg.rules[0] ? rulesCfg.rules[0].name : '');
-}
 function renderRules(){
   rulesListEl.innerHTML = '';
   rulesCfg.rules.forEach((r, idx)=>{
@@ -730,11 +714,11 @@ function renderRules(){
       <span class="rweights">${wHtml}</span>
       需求天数 <input class="rdays" type="number" min="1" step="1" value="${rdays}" style="width:64px" title="生成补货需求的天数窗口；留空则按规则自动推导">
       <button type="button" class="mini rdel">删除</button>`;
-    row.querySelector('.rname').addEventListener('input', e=>{ rulesCfg.rules[idx].name = e.target.value; renderDefaultRuleOptions(); saveRulesCfg(); });
+    row.querySelector('.rname').addEventListener('input', e=>{ rulesCfg.rules[idx].name = e.target.value; saveRulesCfg(); });
     row.querySelector('.rtype').addEventListener('change', e=>{
       rulesCfg.rules[idx].type = e.target.value;
       if(e.target.value==='固定' && rulesCfg.rules[idx].fixed_window==null) rulesCfg.rules[idx].fixed_window = 60;
-      renderRules(); renderDefaultRuleOptions(); renderBinds(); saveRulesCfg();
+      renderRules(); renderBinds(); saveRulesCfg();
     });
     if(r.type==='固定'){
       row.querySelector('.fw').addEventListener('change', e=>{ rulesCfg.rules[idx].fixed_window = parseInt(e.target.value); saveRulesCfg(); });
@@ -761,7 +745,7 @@ function renderRules(){
         if(Array.isArray(arr)){ rulesCfg.bindings[lv] = arr.filter(n=>n!==rn); if(rulesCfg.bindings[lv].length===0) delete rulesCfg.bindings[lv]; }
         else if(arr===rn){ delete rulesCfg.bindings[lv]; }
       });
-      renderRules(); renderDefaultRuleOptions(); renderBinds(); saveRulesCfg();
+      renderRules(); renderBinds(); saveRulesCfg();
     });
     rulesListEl.appendChild(row);
   });
@@ -791,7 +775,6 @@ function renderBinds(){
     bindListEl.appendChild(row);
   });
 }
-function rulesCfgDefaultRule(){ return defaultRuleEl.value || (rulesCfg.rules[0] && rulesCfg.rules[0].name) || ''; }
 function buildRulesCfg(){
   const cfg = JSON.parse(JSON.stringify(rulesCfg));
   cfg.mode = 'rules';
@@ -811,17 +794,16 @@ function buildRulesCfg(){
     const v = cfg.bindings[lv];
     cfg.bindings[lv] = Array.isArray(v) ? v.filter(Boolean) : (v!=null && v!=='' ? [v] : []);
   });
-  cfg.default_rule = rulesCfgDefaultRule();
-  cfg.default_op_level = (document.getElementById('defaultOpLevel').value||'').trim();
+  // 默认规则与默认运营级别已在 UI 中移除，强制为空，未绑定/未映射的运营级别不再走兜底
+  cfg.default_rule = '';
+  cfg.default_op_level = '';
   return cfg;
 }
 
 rulesModeEl.addEventListener('change', ()=>{ rulesCfgBox.style.display = rulesModeEl.checked ? 'block' : 'none'; });
-defaultRuleEl.addEventListener('change', ()=>{ rulesCfg.default_rule = defaultRuleEl.value; saveRulesCfg(); });
-document.getElementById('defaultOpLevel').addEventListener('input', e=>{ rulesCfg.default_op_level = e.target.value.trim(); saveRulesCfg(); });
 document.getElementById('addRule').addEventListener('click', ()=>{
   rulesCfg.rules.push({ name:'新规则'+rulesCfg.rules.length, type:'组合', weights:{3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0}, days: deriveDays({type:'组合',weights:{3:0.5,7:0.2,14:0.2,30:0.1}}) });
-  renderRules(); renderDefaultRuleOptions(); renderBinds(); saveRulesCfg();
+  renderRules(); renderBinds(); saveRulesCfg();
 });
 document.getElementById('addBind').addEventListener('click', ()=>{
   rulesCfg.bindings['新运营级别'] = []; renderBinds(); saveRulesCfg();
@@ -839,16 +821,14 @@ document.getElementById('importCfgFile').addEventListener('change', e=>{
     try{
       const o = JSON.parse(rd.result);
       if(!o.rules || !o.rules.length) throw new Error('缺少 rules');
-      rulesCfg = o; saveRulesCfg(); renderRules(); renderBinds(); renderDefaultRuleOptions();
-      document.getElementById('defaultOpLevel').value = rulesCfg.default_op_level || '';
+      rulesCfg = o; saveRulesCfg(); renderRules(); renderBinds();
     }catch(err){ alert('导入失败：'+err.message); }
   };
   rd.readAsText(f); e.target.value = '';
 });
 document.getElementById('resetCfg').addEventListener('click', ()=>{
   rulesCfg = JSON.parse(JSON.stringify(DEFAULT_RULES_CFG));
-  saveRulesCfg(); renderRules(); renderBinds(); renderDefaultRuleOptions();
-  document.getElementById('defaultOpLevel').value = rulesCfg.default_op_level || '';
+  saveRulesCfg(); renderRules(); renderBinds();
 });
 (function(){
   const zone = document.getElementById('dropMapping');
@@ -865,9 +845,7 @@ function onMappingFile(file){
   document.getElementById('mappingMeta').innerHTML = `文件名 <b>${escAttr(file.name)}</b> ｜ 大小 <b>${mb} MB</b>`;
 }
 
-renderRules(); renderBinds(); renderDefaultRuleOptions();
-document.getElementById('defaultRule').value = rulesCfg.default_rule || '';
-document.getElementById('defaultOpLevel').value = rulesCfg.default_op_level || '';
+renderRules(); renderBinds();
 
 /* =========================================================
  * 页签一：开始处理
