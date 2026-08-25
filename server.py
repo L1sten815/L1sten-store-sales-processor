@@ -415,8 +415,16 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
         return val / wsum
 
     if use_rules:
-        # 按 店铺ASIN 分组保留「正常销售」MSKU 的原始行（后续按各自规则重算加权日均）
-        sales_detail = {}
+        # rules 模式：按 店铺ASIN + 规则名 预聚合加权日均，避免保留全部原始行（大文件省内存）
+        sales_sums = {}
+        # 用映射表先确定每个 ASIN 对应的运营级别，只计算该级别绑定的规则
+        asin_level = {}
+        if mapping:
+            for a_key, ent in mapping.items():
+                lv = ent[0] if ent else ''
+                if not lv:
+                    lv = default_op_level
+                asin_level[a_key] = lv
         for r in sit:
             a = r[iA]
             if a is None:
@@ -424,7 +432,17 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
             a = str(a)
             if iStat >= 0 and r[iStat] is not None and str(r[iStat]).strip() != '正常销售':
                 continue
-            sales_detail.setdefault(a, []).append(r)
+            level = asin_level.get(a, default_op_level)
+            rules_for_level = lookup.get(level)
+            if not rules_for_level:
+                continue
+            sums_for_a = sales_sums.get(a)
+            if sums_for_a is None:
+                sums_for_a = {}
+                sales_sums[a] = sums_for_a
+            for rule in rules_for_level:
+                rn = rule['name']
+                sums_for_a[rn] = sums_for_a.get(rn, 0.0) + rule_m(rule_plans[rn], r)
     else:
         sales = {}
         for r in sit:
@@ -542,7 +560,7 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
             for rule in rules_list:
                 plan = rule_plans[rule['name']]
                 days = plan[2] if plan[0] == 'fixed' else plan[3]
-                M_rule = sum(rule_m(plan, row) for row in sales_detail.get(a, []))
+                M_rule = sales_sums.get(a, {}).get(rule['name'], 0.0)
                 M_rule = round(M_rule * 10000) / 10000
                 m_ok = M_rule > 0
                 if status_ok and dtype_ok and m_ok:
