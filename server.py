@@ -297,7 +297,7 @@ def process_file(in_path, w3, w7, w14, out_path, cols=None, on_progress=None, cf
         op_level = ent[0] if ent else default_op_level
         rules_list = lookup.get(op_level)
         if not rules_list:
-            rules_list = rules_by_name.get(default_rule_name)
+            rules_list = [rules_by_name.get(default_rule_name)] if default_rule_name else None
         # 一个运营级别可绑多条规则：Tab① 销量结果每行仍输出单条加权日均，
         # 取首条绑定规则（或默认规则）作为代表值；按天数展开在 process_ops 完成。
         rule = rules_list[0] if rules_list else None
@@ -345,14 +345,16 @@ def process_file(in_path, w3, w7, w14, out_path, cols=None, on_progress=None, cf
     return new_header, n, preview_rows
 
 
-def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=None, cfg=None, mapping=None):
-    """运营级别处理：按店铺ASIN 从销量结果取加权日均销量(L)，标记满足条件。
-    输出表头=[店铺ASIN]+原表头+[销量,满足条件]（legacy）；
-    rules 模式额外展开 [规则,天数,满足条件,备注]，一个运营级别绑多条规则 -> 一店铺ASIN 多行(按天数)。
+def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progress=None, levels=None, cfg=None, mapping=None):
+    """运营级别处理：按店铺ASIN 从销量原始文件直接 lookup 3/7/14/30/60/90 天日均销量，
+    同店铺ASIN 下多条正常销售 MSKU 的销量相加；输出表头增加这 6 列，并保留加权销量与满足条件标记。
+    - legacy 模式：加权销量 = (w3*d3 + w7*d7 + w14*d14) / (w3+w7+w14)，按 店铺ASIN 汇总。
+    - rules 模式：按运营级别绑定规则计算加权销量，可展开 [规则,天数,满足条件,备注]。
 
     参数：
-      cfg     : 备货规则配置（mode=='rules' 时生效，按绑定规则展开/算加权日均）
-      mapping : 运营级别映射表 {店铺ASIN: (运营级别, 补货方式)}（同 server.load_mapping 产物）
+      w3/w7/w14 : legacy 模式加权权重（rules 模式下仅用于总进度/汇总展示，不参与规则计算）。
+      cfg       : 备货规则配置（mode=='rules' 时生效）
+      mapping   : 运营级别映射表 {店铺ASIN: (运营级别, 补货方式)}
     """
     C = dict(DEF_OPS_COLS)
     if cols:
@@ -360,29 +362,41 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
             if v:
                 C[k] = v
     use_rules = bool(cfg and isinstance(cfg, dict) and cfg.get('mode') == 'rules')
+    WSUM = w3 + w7 + w14
+    if not use_rules and WSUM == 0:
+        raise ValueError("三个权重不能同时为 0")
 
     def fidx(hdr, name):
         for i, h in enumerate(hdr):
             if h == name:
                 return i
         return -1
+    def win_idx_for(hdr, win):
+        ov = (cols or {}).get('d%d' % win) if cols else None
+        name = ov or WIN_COLS[win]
+        return fidx(hdr, name)
 
-    # 1) 读销量结果：legacy 聚合成 {店铺ASIN: 加权日均}；rules 模式保留逐 MSKU 的 6 窗口原始行
-    sh, sit = _calamine_rows(in_sales) if _try_calamine(in_sales) else _openpyxl_rows(in_sales)
-    iA = fidx(sh, C['asinKey']); iM = fidx(sh, C['salesKey'])
-    iStat = fidx(sh, '状态')   # 销量表的 状态 列（正常销售/停止销售）
-    if iA < 0 or iM < 0:
-        raise ValueError("销量结果缺少必要列：店铺ASIN / 日均销量加权（当前列：%s）" % sh)
+    # 1) 读销量原始文件，按 店铺ASIN 预聚合 6 窗口销量（仅正常销售）
+    sh, sit = _calamine_rows(in_sales_raw) if _try_calamine(in_sales_raw) else _openpyxl_rows(in_sales_raw)
+    i_store = fidx(sh, C['store']); i_asin = fidx(sh, C['asin'])
+    i_stat = fidx(sh, '状态')
+    win_idx = {w: win_idx_for(sh, w) for w in WIN_COLS}
+    # 3/7/14 必须存在；30/60/90 若缺失按 0 处理
+    if i_store < 0 or i_asin < 0:
+        raise ValueError("销量原始文件缺少必要列：%s / %s（当前列：%s）" % (C['store'], C['asin'], sh))
+    if win_idx[3] < 0 or win_idx[7] < 0 or win_idx[14] < 0:
+        raise ValueError("销量原始文件缺少必要列：三天日均销量 / 七天日均销量 / 十四天日均销量（当前列：%s）" % sh)
 
-    # rules 模式预编译：规则计划(含 days) + 绑定树(op_level -> [规则,...])
+    # 6 窗口汇总：{店铺ASIN: {3:sum, 7:sum, 14:sum, 30:sum, 60:sum, 90:sum}}
+    sales_6win = {}
+    # legacy 加权汇总
+    sales_weighted = {}
+    # rules 模式：{店铺ASIN: {rule_name: 加权销量累计}}
+    sales_sums = {}
+
+    # rules 模式预编译
     rule_plans = {}; lookup = {}; default_rule_name = ''; default_op_level = ''
-    win_col_idx = {}
     if use_rules:
-        def win_col_idx_for(win):
-            ov = (cols or {}).get('d%d' % win) if cols else None
-            name = ov or WIN_COLS[win]
-            return fidx(sh, name)
-        win_col_idx = {w: win_col_idx_for(w) for w in WIN_COLS}
         rules_by_name, lookup = _build_rule_lookup(cfg)
         default_rule_name = cfg.get('default_rule') or ''
         default_op_level = cfg.get('default_op_level') or ''
@@ -390,33 +404,17 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
         def plan_for(rule):
             if rule.get('type') == '固定':
                 fw = int(rule.get('fixed_window') or 0)
-                return ('fixed', win_col_idx.get(fw, -1) if fw in WIN_COLS else -1, _rule_days(rule))
+                return ('fixed', win_idx.get(fw, -1) if fw in WIN_COLS else -1, _rule_days(rule))
             w = {int(k): float(v) for k, v in (rule.get('weights') or {}).items()}
             terms = []
             for win, wt in w.items():
-                ci = win_col_idx.get(win, -1) if win in WIN_COLS else -1
+                ci = win_idx.get(win, -1) if win in WIN_COLS else -1
                 if ci >= 0:
                     terms.append((wt, ci))
             wsum = sum(w.values()) or 1.0
             return ('combo', terms, wsum, _rule_days(rule))
         rule_plans = {name: plan_for(r) for name, r in rules_by_name.items()}
 
-    def rule_m(plan, row):
-        if plan[0] == '固定' or (plan[0] == 'fixed'):
-            ci = plan[1]
-            return fnum(row[ci]) if (0 <= ci < len(row)) else 0.0
-        # combo: ('combo', terms, wsum, days) — 用索引取 terms/wsum，兼容有无 days
-        terms = plan[1]
-        wsum = plan[2]
-        val = 0.0
-        for wt, ci in terms:
-            if 0 <= ci < len(row):
-                val += wt * fnum(row[ci])
-        return val / wsum
-
-    if use_rules:
-        # rules 模式：按 店铺ASIN + 规则名 预聚合加权日均，避免保留全部原始行（大文件省内存）
-        sales_sums = {}
         # 用映射表先确定每个 ASIN 对应的运营级别，只计算该级别绑定的规则
         asin_level = {}
         if mapping:
@@ -425,34 +423,50 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
                 if not lv:
                     lv = default_op_level
                 asin_level[a_key] = lv
-        for r in sit:
-            a = r[iA]
-            if a is None:
-                continue
-            a = str(a)
-            if iStat >= 0 and r[iStat] is not None and str(r[iStat]).strip() != '正常销售':
-                continue
+
+    def rule_m(plan, row):
+        if plan[0] == '固定' or (plan[0] == 'fixed'):
+            ci = plan[1]
+            return fnum(row[ci]) if (0 <= ci < len(row)) else 0.0
+        terms = plan[1]
+        wsum = plan[2]
+        val = 0.0
+        for wt, ci in terms:
+            if 0 <= ci < len(row):
+                val += wt * fnum(row[ci])
+        return val / wsum
+
+    for r in sit:
+        store = r[i_store] if i_store >= 0 else ''
+        asin = r[i_asin] if i_asin >= 0 else ''
+        a = (str(store) if store is not None else '') + (str(asin) if asin is not None else '')
+        if not a:
+            continue
+        if i_stat >= 0 and r[i_stat] is not None and str(r[i_stat]).strip() != '正常销售':
+            continue
+        # 6 窗口累计
+        sums = sales_6win.get(a)
+        if sums is None:
+            sums = {}
+            sales_6win[a] = sums
+        for w, ci in win_idx.items():
+            if ci >= 0:
+                sums[w] = sums.get(w, 0.0) + fnum(r[ci])
+        # legacy 加权
+        if not use_rules:
+            m = (w3 * fnum(r[win_idx[3]]) + w7 * fnum(r[win_idx[7]]) + w14 * fnum(r[win_idx[14]])) / WSUM
+            sales_weighted[a] = sales_weighted.get(a, 0.0) + m
+        else:
             level = asin_level.get(a, default_op_level)
             rules_for_level = lookup.get(level)
-            if not rules_for_level:
-                continue
-            sums_for_a = sales_sums.get(a)
-            if sums_for_a is None:
-                sums_for_a = {}
-                sales_sums[a] = sums_for_a
-            for rule in rules_for_level:
-                rn = rule['name']
-                sums_for_a[rn] = sums_for_a.get(rn, 0.0) + rule_m(rule_plans[rn], r)
-    else:
-        sales = {}
-        for r in sit:
-            a = r[iA]
-            if a is None:
-                continue
-            a = str(a)
-            if iStat >= 0 and r[iStat] is not None and str(r[iStat]).strip() != '正常销售':
-                continue
-            sales[a] = sales.get(a, 0.0) + fnum(r[iM])
+            if rules_for_level:
+                ss = sales_sums.get(a)
+                if ss is None:
+                    ss = {}
+                    sales_sums[a] = ss
+                for rule in rules_for_level:
+                    rn = rule['name']
+                    ss[rn] = ss.get(rn, 0.0) + rule_m(rule_plans[rn], r)
 
     # 2) 读运营级别
     oh, oit = _calamine_rows(in_ops) if _try_calamine(in_ops) else _openpyxl_rows(in_ops)
@@ -477,29 +491,32 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
         raise ValueError("运营级别缺少必要列：运营级别（当前列：%s）" % oh)
     distinct_levels = set()
 
-    # 清洗表头：去掉名为空的列；若原表已有 店铺ASIN/销量 则不重复添加
+    # 清洗表头：去掉名为空的列；若原表已有 店铺ASIN/销量/6窗口列 则不重复添加
     clean_idx = [i for i, h in enumerate(oh) if h != '']
     clean_oh = [oh[i] for i in clean_idx]
     i_key2 = fidx(clean_oh, '店铺ASIN')
     iL2 = fidx(clean_oh, '销量')
+    # 6 窗口原始销量列名（输出用）
+    WIN_OUT_COLS = ['三天日均销量', '七天日均销量', '十四天日均销量', '三十天日均销量', '60天日均销量', '90天日均销量']
+    existing_win = [c for c in WIN_OUT_COLS if fidx(clean_oh, c) >= 0]
     prepend_a = (i_key2 < 0)
 
+    extra_tail = list(WIN_OUT_COLS)
     if use_rules:
-        out_header = list(clean_oh)
-        if prepend_a:
-            out_header = ['店铺ASIN'] + out_header
         if iL2 < 0:
-            out_header = out_header + ['销量', '规则', '天数', '满足条件', '备注']
+            extra_tail = extra_tail + ['销量', '规则', '天数', '满足条件', '备注']
         else:
-            out_header = out_header + ['规则', '天数', '满足条件', '备注']
+            extra_tail = extra_tail + ['规则', '天数', '满足条件', '备注']
     else:
-        out_header = list(clean_oh)
-        if prepend_a:
-            out_header = ['店铺ASIN'] + out_header
         if iL2 < 0:
-            out_header = out_header + ['销量', '满足条件']
+            extra_tail = extra_tail + ['销量', '满足条件']
         else:
-            out_header = out_header + ['满足条件']
+            extra_tail = extra_tail + ['满足条件']
+
+    out_header = list(clean_oh)
+    if prepend_a:
+        out_header = ['店铺ASIN'] + out_header
+    out_header = out_header + extra_tail
     sales_idx = (iL2 + (1 if prepend_a else 0)) if iL2 >= 0 else None
 
     n = 0
@@ -521,18 +538,22 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
             if prepend_a:
                 cr_base = [a] + cr_base
 
+            # 6 窗口原始销量（从销量原始文件直接 lookup，同店铺ASIN 多条 MSKU 已相加）
+            win_vals = sales_6win.get(a, {})
+            win_part = [round(win_vals.get(w, 0.0) * 10000) / 10000 for w in WIN_COLS]
+
             if not use_rules:
                 # ---- legacy：单行 + 白名单 ----
-                L = sales.get(a, 0.0)
+                L = sales_weighted.get(a, 0.0)
                 level_ok = (not allowed) or (level_val in allowed)
                 ok = (str(r[i_status]).strip() == '正常销售') and (str(r[i_dtype]).strip() == 'FBA') and L > 0 and level_ok
                 if ok:
                     meet += 1
                 if iL2 < 0:
-                    cr = cr_base + [round(L * 10000) / 10000]
+                    cr = cr_base + win_part + [round(L * 10000) / 10000]
                 else:
                     cr_base[sales_idx] = round(L * 10000) / 10000
-                    cr = cr_base
+                    cr = cr_base + win_part
                 cr = cr + ['是' if ok else '否']
                 yield cr
                 n += 1
@@ -548,10 +569,10 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
             if not rules_list:
                 # 未绑定规则 / 运营级别未选 -> 单行，不满足条件
                 if iL2 < 0:
-                    cr = cr_base + [0, '', '', '否', '未绑定规则(运营级别未选)']
+                    cr = cr_base + win_part + [0, '', '', '否', '未绑定规则(运营级别未选)']
                 else:
                     cr_base[sales_idx] = 0
-                    cr = cr_base + ['', '', '否', '未绑定规则(运营级别未选)']
+                    cr = cr_base + win_part + ['', '', '否', '未绑定规则(运营级别未选)']
                 yield cr
                 n += 1
                 if on_progress and n % 5000 == 0:
@@ -579,11 +600,11 @@ def process_ops(in_ops, in_sales, out_path, cols=None, on_progress=None, levels=
                 if ok:
                     meet += 1
                 if iL2 < 0:
-                    cr = cr_base + [M_rule, rule['name'], days, '是' if ok else '否', note]
+                    cr = cr_base + win_part + [M_rule, rule['name'], days, '是' if ok else '否', note]
                 else:
                     tmp = list(cr_base)
                     tmp[sales_idx] = M_rule
-                    cr = tmp + [rule['name'], days, '是' if ok else '否', note]
+                    cr = tmp + win_part + [rule['name'], days, '是' if ok else '否', note]
                 yield cr
                 n += 1
                 if on_progress and n % 5000 == 0:
@@ -1360,6 +1381,9 @@ class H(http.server.BaseHTTPRequestHandler):
                 'd3': (qs_get(p, 'colD3') or '').strip(),
                 'd7': (qs_get(p, 'colD7') or '').strip(),
                 'd14': (qs_get(p, 'colD14') or '').strip(),
+                'd30': (qs_get(p, 'colD30') or '').strip(),
+                'd60': (qs_get(p, 'colD60') or '').strip(),
+                'd90': (qs_get(p, 'colD90') or '').strip(),
             }
             if not any(cols.values()):
                 cols = None
@@ -1607,7 +1631,6 @@ def run_fba(sid, task):
         if not (sales_p and ops_p and fba_p):
             raise ValueError("缺少上传文件（销量 / 运营级别 / FBA需求）")
         tid = task['id']
-        out_sales = os.path.join(HERE, '_fba_%s_sales.xlsx' % tid)
         out_ops = os.path.join(HERE, '_fba_%s_ops.xlsx' % tid)
         out_diff = os.path.join(HERE, '_fba_%s_diff.xlsx' % tid)
 
@@ -1619,22 +1642,22 @@ def run_fba(sid, task):
         mapp = up.get('mapping')
         mp = load_mapping(mapp) if mapp else None
         cfg = task.get('cfg')
+        w3, w7, w14 = task['w']
 
-        hdr_s, n_s, prev = process_file(sales_p, task['w'][0], task['w'][1], task['w'][2],
-                                         out_sales, cols=task.get('cols'), on_progress=prog,
-                                         cfg=cfg, mapping=mp)
-        hdr_o, n_o, meet, level_info = process_ops(ops_p, out_sales, out_ops, cols=task.get('cols'),
-                                                    on_progress=prog, levels=task.get('levels'), cfg=cfg, mapping=mp)
+        # 页签②：销量原始文件不再单独处理输出，直接作为 lookup 源传给 process_ops
+        hdr_o, n_o, meet, level_info = process_ops(ops_p, sales_p, out_ops, w3, w7, w14,
+                                                    cols=task.get('cols'), on_progress=prog,
+                                                    levels=task.get('levels'), cfg=cfg, mapping=mp)
         hdr_d, n_d, summary, diff_preview = process_diff(out_ops, fba_p, out_diff, cols=task.get('cols'),
                                                          cfg=cfg, mapping=mp)
 
         with LOCK:
             task['status'] = 'done'
-            task['outputs'] = {'sales': out_sales, 'ops': out_ops, 'diff': out_diff}
+            task['outputs'] = {'ops': out_ops, 'diff': out_diff}
             task['summary'] = summary
-            task['n_rows'] = n_s
-            task['header'] = hdr_s
-            task['preview_rows'] = prev
+            task['n_rows'] = n_o
+            task['header'] = hdr_o
+            task['preview_rows'] = None
             task['diff_header'] = hdr_d
             task['diff_preview'] = diff_preview
             task['level_info'] = level_info

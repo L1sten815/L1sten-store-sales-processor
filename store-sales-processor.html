@@ -238,6 +238,9 @@
           <div class="field"><label>三天日均列名</label><input type="text" id="colD3" value="三天日均销量" /></div>
           <div class="field"><label>七天日均列名</label><input type="text" id="colD7" value="七天日均销量" /></div>
           <div class="field"><label>十四天日均列名</label><input type="text" id="colD14" value="十四天日均销量" /></div>
+          <div class="field"><label>三十天日均列名</label><input type="text" id="colD30" value="三十天日均销量" /></div>
+          <div class="field"><label>60天日均列名</label><input type="text" id="colD60" value="60天日均销量" /></div>
+          <div class="field"><label>90天日均列名</label><input type="text" id="colD90" value="90天日均销量" /></div>
         </div>
       </details>
       <details style="margin-top:14px">
@@ -300,7 +303,7 @@
   <div class="panel hide" id="panel-fba">
     <section class="card">
       <h2>FBA需求差异分析（销量 + 运营级别 + 需求，三表合一）</h2>
-      <div class="meta">上传三个文件，自动产出：<b>① 销量处理结果</b> ｜ <b>② 运营级别处理结果</b>（含关联销量与「满足条件」标记）｜ <b>③ 差异比对</b>（运营满足条件 vs FBA需求）。</div>
+      <div class="meta">上传三个文件，自动产出：<b>① 运营级别处理结果</b>（按 店铺ASIN 从销量原始文件 lookup 6 窗口日均销量并关联，同店铺ASIN 下多条正常销售 MSKU 的销量相加）｜ <b>② 差异比对</b>（运营满足条件 vs FBA需求）。<br><b>销量原始文件不再单独输出处理结果</b>，仅作为运营级别文件的 lookup 数据源。</div>
       <div class="three">
         <div class="field">
           <div class="drop" id="dropSales">
@@ -330,10 +333,11 @@
           <div class="meta" id="fbaMeta">尚未选择文件</div>
         </div>
       </div>
-      <div class="note" style="margin-top:12px">口径：<b>满足条件</b> = 销售状态=「正常销售」且 配送类型=「FBA」且 销量(加权日均)&gt;0 且 <b>运营级别满足筛选条件</b>。
-        <b>销量(加权日均) 已按 店铺ASIN 跨多个 MSKU 汇总</b>（同一 ASIN 的不同商户 SKU 的销量相加，仅计「正常销售」MSKU），不再只取其中一个 MSKU。
+      <div class="note" style="margin-top:12px">口径：<b>销量原始文件仅作 lookup，不单独输出处理结果</b>。运营级别文件按 <b>店铺ASIN</b> 去销量原始文件查找 3/7/14/30/60/90 天日均销量；同一 店铺ASIN 下多条「正常销售」MSKU 的对应窗口销量会相加，再写入运营级别处理结果。<br>
+        <b>满足条件</b> = 销售状态=「正常销售」且 配送类型=「FBA」且 销量(加权日均)&gt;0 且 <b>运营级别满足筛选条件</b>。
+        <b>销量(加权日均)</b> 仍按 店铺ASIN 跨多个 MSKU 汇总（仅计「正常销售」MSKU）。
         差异按 <b>店铺ASIN</b> 比对：<span class="st-both">已生成</span>（两侧都有）／<span class="st-miss">缺失</span>（运营满足但需求未生成）／<span class="st-extra">多余</span>（需求有但运营不满足条件）。
-        <b>加权计算口径：</b>若页签①<b>未开启</b>备货规则，销量原始文件沿用页签①的 3天/7天/14天 权重；若页签①<b>开启</b>了备货规则，则按各运营级别在页签①里绑定的规则分别计算（组合权重或固定窗口可能不同）。下方「符合补货条件的运营级别」仅在<b>未开启</b>备货规则时起筛选作用；开启备货规则后，以页签①里已绑定的运营级别为准。</div>
+        <b>加权计算口径：</b>若页签①<b>未开启</b>备货规则，运营级别文件里的「销量」列沿用页签①的 3天/7天/14天 权重；若页签①<b>开启</b>了备货规则，则按各运营级别在页签①里绑定的规则分别计算。下方「符合补货条件的运营级别」仅在<b>未开启</b>备货规则时起筛选作用；开启备货规则后，以页签①里已绑定的运营级别为准。</div>
       <div style="margin-top:12px">
         <div style="font-size:13px;color:#555;margin-bottom:4px">符合补货条件的运营级别（未开启备货规则时生效；可填多个，逗号 / 空格 / 换行 / 顿号分隔；<b>留空 = 不按运营级别筛选，所有级别都参与</b>）</div>
         <textarea id="fbaLevels" rows="2" placeholder="例如：六块, 其他, 大件" style="width:100%;max-width:560px;resize:vertical;"></textarea>
@@ -354,7 +358,6 @@
       <div class="meta" id="fbaLevelsMeta"></div>
       <div class="summary-grid" id="fbaSummary"></div>
       <div class="dlrow">
-        <a id="dlSalesLink" style="text-decoration:none"><button class="primary">⬇ 销量处理结果</button></a>
         <a id="dlOpsLink" style="text-decoration:none"><button class="primary">⬇ 运营级别处理结果</button></a>
         <a id="dlDiffLink" style="text-decoration:none"><button class="primary">⬇ 差异比对结果</button></a>
       </div>
@@ -862,6 +865,9 @@ document.getElementById('runBtn').addEventListener('click', ()=>{
     colD3:    document.getElementById('colD3').value.trim(),
     colD7:    document.getElementById('colD7').value.trim(),
     colD14:   document.getElementById('colD14').value.trim(),
+    colD30:   document.getElementById('colD30').value.trim(),
+    colD60:   document.getElementById('colD60').value.trim(),
+    colD90:   document.getElementById('colD90').value.trim(),
   };
   const parts = ['w3='+enc(a),'w7='+enc(b),'w14='+enc(c), 'filename='+enc(currentFile.name)];
   for(const k in cols){ if(cols[k]) parts.push(k+'='+enc(cols[k])); }
@@ -1003,9 +1009,20 @@ document.getElementById('fbaRunBtn').addEventListener('click', ()=>{
       }
       // 触发链式处理
       const parts = ['type=fba','sid='+enc(fbaSid),'w3='+enc(a),'w7='+enc(b),'w14='+enc(c)];
+      const cols = {
+        colStore: document.getElementById('colStore').value.trim(),
+        colAsin:  document.getElementById('colAsin').value.trim(),
+        colD3:    document.getElementById('colD3').value.trim(),
+        colD7:    document.getElementById('colD7').value.trim(),
+        colD14:   document.getElementById('colD14').value.trim(),
+        colD30:   document.getElementById('colD30').value.trim(),
+        colD60:   document.getElementById('colD60').value.trim(),
+        colD90:   document.getElementById('colD90').value.trim(),
+      };
+      for(const k in cols){ if(cols[k]) parts.push(k+'='+enc(cols[k])); }
       for(const x of parseFbaLevels()){ parts.push('levels='+enc(x)); }
       if(rulesModeEl.checked){ parts.push('cfg='+enc(JSON.stringify(buildRulesCfg()))); }
-      setFbaStatus('<span class="spinner"></span>三文件已上传，后台正在串联处理（销量→运营级别→差异）…', 'run');
+      setFbaStatus('<span class="spinner"></span>三文件已上传，后台正在串联处理（运营级别 lookup 销量 → 差异）…', 'run');
       const r2 = await fetch(`${API}/api/tasks?`+parts.join('&'), { method:'POST' });
       if(!r2.ok){ setFbaStatus('⚠ 后台返回错误：HTTP '+r2.status, 'err'); document.getElementById('fbaBarWrap').style.display='none'; return; }
       const j2 = await r2.json();
@@ -1040,7 +1057,7 @@ function fbaPoll(){
       const j = await r.json();
       if(j.status === 'running'){
         const n = j.n_rows || 0;
-        setFbaStatus('<span class="spinner"></span>后台处理中… 已处理销量 <b>'+n.toLocaleString()+'</b> 行（随后计算运营级别与差异）', 'run');
+        setFbaStatus('<span class="spinner"></span>后台处理中… 已处理运营级别 <b>'+n.toLocaleString()+'</b> 行（随后进行差异比对）', 'run');
         document.getElementById('fbaBar').style.width = '55%';
       }else if(j.status === 'done'){
         clearInterval(fbaPollTimer); fbaPollTimer = null; fbaFinishDone(j);
@@ -1064,8 +1081,7 @@ function fbaFinishDone(j){
   setFbaStatus('✅ 处理完成！运营满足条件(唯一店铺ASIN) <b>'+(s.op_meet||0).toLocaleString()+'</b> ｜ '+
     'FBA需求(唯一) <b>'+(s.fba_unique||0).toLocaleString()+'</b> ｜ '+
     '已生成 <b>'+(s.both||0).toLocaleString()+'</b> ｜ 缺失 <b>'+(s.miss||0).toLocaleString()+'</b> ｜ 多余 <b>'+(s.extra||0).toLocaleString()+'</b>', 'done');
-  // 下载链接
-  document.getElementById('dlSalesLink').href = `${API}/api/tasks/${fbaTaskId}/download?which=sales`;
+  // 下载链接（页签②不再输出销量处理结果）
   document.getElementById('dlOpsLink').href   = `${API}/api/tasks/${fbaTaskId}/download?which=ops`;
   document.getElementById('dlDiffLink').href  = `${API}/api/tasks/${fbaTaskId}/download?which=diff`;
   // 汇总卡片

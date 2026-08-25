@@ -41,7 +41,7 @@ CFG = {
     "default_rule": "30天测试",
     "default_op_level": "",
 }
-MAPPING = {"S1A1":("新品",""), "S2A2":("美国-30天日均-[5~10]","")}
+MAPPING = {"S1A1":("新品",""), "S2A2":("美国-30天日均-[5~10]",""), "S4A4":("新品",""), "S5A5":("新品","")}
 
 fails = []
 def check(name, got, exp):
@@ -75,7 +75,8 @@ ws.append(['S4A4','正常销售','FBA','新品'])   # 销量>0 → 应生成
 ws.append(['S5A5','正常销售','FBA','新品'])   # 销量=0 → 不生成
 wb.save(ops_in)
 ops_out = os.path.join(HERE, 'ops_out.xlsx')
-oh, on, meet, level_info = server.process_ops(ops_in, rules_out, ops_out)
+# 页签②已改为直接读销量原始文件 lookup，不再传 process_file 处理后的结果
+oh, on, meet, level_info = server.process_ops(ops_in, sales_in, ops_out, 0.6, 0.3, 0.1, cfg=CFG, mapping=MAPPING)
 wb2 = openpyxl.load_workbook(ops_out, data_only=True); ws2 = wb2.active
 rows = list(ws2.iter_rows(values_only=True))
 hdr = list(rows[0]); ci = hdr.index('满足条件')

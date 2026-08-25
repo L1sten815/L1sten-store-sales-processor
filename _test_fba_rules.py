@@ -77,8 +77,8 @@ def run_rules():
     out_s = os.path.join(TMP, 'o_sales.xlsx')
     out_o = os.path.join(TMP, 'o_ops.xlsx')
     out_d = os.path.join(TMP, 'o_diff.xlsx')
-    server.process_file(sales_p, 0.6, 0.3, 0.14, out_s, cfg=CFG, mapping=mp)
-    h_o, n_o, meet, li = server.process_ops(ops_p, out_s, out_o, cfg=CFG, mapping=mp)
+    # 页签②已改为：销量原始文件不再单独处理，直接作为 lookup 源传给 process_ops
+    h_o, n_o, meet, li = server.process_ops(ops_p, sales_p, out_o, 0.6, 0.3, 0.14, cfg=CFG, mapping=mp)
     h_d, n_d, summary, prev = server.process_diff(out_o, fba_p, out_d, cfg=CFG, mapping=mp)
     print('=== RULES 模式 ===')
     print('ops 行数:', n_o, '| meet:', meet)
@@ -114,8 +114,8 @@ def run_legacy():
     out_s = os.path.join(TMP, 'l_sales.xlsx')
     out_o = os.path.join(TMP, 'l_ops.xlsx')
     out_d = os.path.join(TMP, 'l_diff.xlsx')
-    server.process_file(sales_p, 0.6, 0.3, 0.14, out_s)   # 无 cfg → legacy
-    h_o, n_o, meet, li = server.process_ops(ops_p, out_s, out_o)
+    # 页签② legacy：销量原始文件直接 lookup
+    h_o, n_o, meet, li = server.process_ops(ops_p, sales_p, out_o, 0.6, 0.3, 0.14)
     h_d, n_d, summary, prev = server.process_diff(out_o, fba_p, out_d)
     print('\n=== LEGACY 模式 ===')
     print('ops 行数:', n_o, '| meet:', meet)
