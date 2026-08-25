@@ -25,6 +25,71 @@ DEF_COLS = {'store': '店铺', 'asin': 'ASIN', 'd3': '三天日均销量', 'd7':
 DEF_OPS_COLS = {'store': '店铺', 'asin': 'ASIN', 'status': '销售状态', 'dtype': '配送类型',
                 'asinKey': '店铺ASIN', 'salesKey': '日均销量加权', 'level': '运营级别'}
 
+# 备货规则 6 窗口列名（标准中文列名；某窗列缺失按 0 处理，权重=0 不影响结果）
+WIN_COLS = {3: "三天日均销量", 7: "七天日均销量", 14: "十四天日均销量",
+            30: "三十天日均销量", 60: "60天日均销量", 90: "90天日均销量"}
+
+
+def load_mapping(path):
+    """读运营级别映射表 -> {店铺+ASIN(去空格拼接): (运营级别, 补货方式)}。
+    支持两种列格式：①「店铺」+「ASIN」两列；②「店铺ASIN」合并一列。
+    合并 key 与销量结果 A 列（店铺+ASIN 无分隔符）构造方式一致，故两种格式都能匹配。
+    """
+    try:
+        header, it = _calamine_rows(path)
+    except Exception:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        it = ws.iter_rows(values_only=True)
+        header = [str(h) if h is not None else '' for h in next(it)]
+    if not header:
+        raise ValueError("映射表没有任何数据行（只有表头或为空）")
+
+    def find(n):
+        for i, h in enumerate(header):
+            if h == n:
+                return i
+        return -1
+    i_store = find('店铺'); i_asin = find('ASIN'); i_comb = find('店铺ASIN')
+    i_level = find('运营级别'); i_mode = find('补货方式')
+    if (i_store < 0 or i_asin < 0) and i_comb < 0:
+        raise ValueError("映射表缺少必要列：需有「店铺」+「ASIN」两列，或「店铺ASIN」合并列")
+    if i_level < 0:
+        raise ValueError("映射表缺少「运营级别」列（当前列：%s）" % "、".join(header))
+    m = {}
+    for r in it:
+        if not r:
+            continue
+        if i_comb >= 0:
+            comb = str(r[i_comb]).strip() if r[i_comb] is not None else ''
+        else:
+            s = str(r[i_store]).strip() if r[i_store] is not None else ''
+            a = str(r[i_asin]).strip() if r[i_asin] is not None else ''
+            comb = s + a
+        if not comb:
+            continue
+        level = str(r[i_level]).strip() if r[i_level] is not None else ''
+        mode = str(r[i_mode]).strip() if (i_mode >= 0 and r[i_mode] is not None) else ''
+        m[comb] = (level, mode)
+    return m
+
+
+def _build_rule_lookup(cfg):
+    """cfg -> (rules_by_name, lookup_by_op_level)，并校验绑定引用的规则名都存在。"""
+    rules = {r['name']: r for r in cfg.get('rules', [])}
+    if not rules:
+        raise ValueError("配置缺少 rules（备货规则）")
+    dr = cfg.get('default_rule')
+    if dr and dr not in rules:
+        raise ValueError("default_rule 引用的规则不存在：%s" % dr)
+    lookup = {}
+    for op_level, rn in cfg.get('bindings', {}).items():
+        if rn not in rules:
+            raise ValueError("绑定表引用的规则不存在：运营级别「%s」→ 规则「%s」" % (op_level, rn))
+        lookup[op_level] = rules[rn]
+    return rules, lookup
+
+
 TASKS = {}      # id -> dict
 UPLOADS = {}    # sid -> {slot: path}
 LOCK = threading.Lock()
@@ -125,15 +190,19 @@ def _calamine_rows(path):
     return header, it
 
 
-def process_file(in_path, w3, w7, w14, out_path, cols=None, on_progress=None):
-    """销量处理：原始销量 -> 店铺ASIN + 加权日均销量（in_memory 计算，流式写出）。"""
+def process_file(in_path, w3, w7, w14, out_path, cols=None, on_progress=None, cfg=None, mapping=None):
+    """销量处理：原始销量 -> 店铺ASIN + 加权日均销量（in_memory 计算，流式写出）。
+    - cfg=None 或 cfg['mode']=='legacy' → 沿用旧 w3/w7/w14 单一权重（完全向下兼容）。
+    - cfg['mode']=='rules' → 按 (店铺,ASIN) 查 mapping 得运营级别 → bindings 找规则（6窗组合/固定窗）算加权日均。
+    """
     C = dict(DEF_COLS)
     if cols:
         for k, v in cols.items():
             if v:
                 C[k] = v
+    use_rules = bool(cfg and isinstance(cfg, dict) and cfg.get('mode') == 'rules')
     WSUM = w3 + w7 + w14
-    if WSUM == 0:
+    if not use_rules and WSUM == 0:
         raise ValueError("三个权重不能同时为 0")
 
     try:
@@ -154,11 +223,36 @@ def process_file(in_path, w3, w7, w14, out_path, cols=None, on_progress=None):
         return -1
     i_asin = find(C['asin']); i_store = find(C['store'])
     i_d3 = find(C['d3']); i_d7 = find(C['d7']); i_d14 = find(C['d14'])
+    # 6 窗口列（含可选 cols 覆盖 d30/d60/d90）
+    def win_idx(win):
+        ov = (cols or {}).get('d%d' % win) if cols else None
+        name = ov or WIN_COLS[win]
+        return find(name)
+    i_d30 = win_idx(30); i_d60 = win_idx(60); i_d90 = win_idx(90)
     names = [('店铺', C['store']), ('ASIN', C['asin']),
              ('三天日均销量', C['d3']), ('七天日均销量', C['d7']), ('十四天日均销量', C['d14'])]
     miss = [label + '(' + name + ')' for label, name in names if find(name) < 0]
     if miss:
         raise ValueError("缺少必要列：" + "、".join(miss) + "。当前文件的列名为：" + "、".join(header))
+
+    # ---- 规则模式预编译：{规则名: ('fixed', col_idx) | ('combo', [(w,col_idx)...], wsum)} ----
+    if use_rules:
+        rules_by_name, lookup = _build_rule_lookup(cfg)
+        def plan_for(rule):
+            if rule.get('type') == '固定':
+                fw = int(rule.get('fixed_window') or 0)
+                return ('fixed', win_idx(fw) if fw in WIN_COLS else -1)
+            w = {int(k): float(v) for k, v in (rule.get('weights') or {}).items()}
+            terms = []
+            for win, wt in w.items():
+                ci = win_idx(win) if win in WIN_COLS else -1
+                if ci >= 0:
+                    terms.append((wt, ci))
+            wsum = sum(w.values()) or 1.0
+            return ('combo', terms, wsum)
+        rule_plans = {name: plan_for(r) for name, r in rules_by_name.items()}
+        default_rule_name = cfg.get('default_rule')
+        default_op_level = cfg.get('default_op_level') or ''
 
     new_header = list(header)
     new_header.insert(0, '店铺ASIN')
@@ -173,12 +267,32 @@ def process_file(in_path, w3, w7, w14, out_path, cols=None, on_progress=None):
     preview_rows = []
     n = 0
 
+    def _compute_rules_m(row, store, asin):
+        key = (str(store).strip() + str(asin).strip()) if (store is not None or asin is not None) else ''
+        ent = mapping.get(key) if mapping else None
+        op_level = ent[0] if ent else default_op_level
+        rule = lookup.get(op_level) or rules_by_name.get(default_rule_name)
+        if not rule:
+            return 0.0
+        plan = rule_plans[rule['name']]
+        if plan[0] == 'fixed':
+            ci = plan[1]
+            return fnum(get(row, ci)) if ci >= 0 else 0.0
+        _, terms, wsum = plan
+        val = 0.0
+        for wt, ci in terms:
+            val += wt * fnum(get(row, ci))
+        return val / wsum
+
     def row_gen():
         nonlocal n
         for row in data_iter:
             store = get(row, i_store); asin = get(row, i_asin)
             a = (str(store) if store is not None else '') + (str(asin) if asin is not None else '')
-            m = (w3 * fnum(get(row, i_d3)) + w7 * fnum(get(row, i_d7)) + w14 * fnum(get(row, i_d14))) / WSUM
+            if use_rules:
+                m = _compute_rules_m(row, store, asin)
+            else:
+                m = (w3 * fnum(get(row, i_d3)) + w7 * fnum(get(row, i_d7)) + w14 * fnum(get(row, i_d14))) / WSUM
             m = round(m * 10000) / 10000
             nr = list(row); nr.insert(0, a); nr.insert(i_d14 + 2, m)
             while len(nr) < hdr_len:
@@ -1019,6 +1133,10 @@ class H(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 self._json(400, {'error': 'invalid weights'})
                 return
+            cfg = _parse_cfg_param(p)
+            if cfg is False:
+                self._json(400, {'error': 'cfg 不是合法 JSON'})
+                return
             up = UPLOADS.get(sid, {})
             if not (up.get('sales') and up.get('ops') and up.get('fba')):
                 self._json(400, {'error': '请先上传 销量 / 运营级别 / FBA需求 三个文件'})
@@ -1045,6 +1163,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 'n_rows': 0, 'header': None, 'preview_rows': None,
                 'outputs': None, 'summary': None, 'diff_header': None, 'diff_preview': None,
                 'error_msg': None, 'w': (w3, w7, w14), 'cols': cols, 'levels': levels, 'sid': sid,
+                'cfg': cfg,
                 'created': time.time(), 'finished': None,
             }
             with LOCK:
@@ -1177,6 +1296,12 @@ class H(http.server.BaseHTTPRequestHandler):
         except ValueError:
             self._json(400, {'error': 'invalid weights'})
             return
+        # 可选：运营级别映射表（slot=mapping，同 sid）+ 备货规则配置 cfg(JSON)
+        sid = qs_get(p, 'sid') or ''
+        cfg = _parse_cfg_param(p)
+        if cfg is False:
+            self._json(400, {'error': 'cfg 不是合法 JSON'})
+            return
         try:
             length = int(self.headers.get('Content-Length', 0))
         except ValueError:
@@ -1200,7 +1325,7 @@ class H(http.server.BaseHTTPRequestHandler):
             'id': tid, 'status': 'running', 'type': 'sales', 'filename': fname, 'n_rows': 0,
             'header': None, 'preview_rows': None, 'error_msg': None,
             'input_path': in_path, 'output_path': out_path,
-            'w': (w3, w7, w14), 'cols': cols,
+            'w': (w3, w7, w14), 'cols': cols, 'sid': sid, 'cfg': cfg,
             'created': time.time(), 'finished': None,
         }
         with LOCK:
@@ -1211,7 +1336,10 @@ class H(http.server.BaseHTTPRequestHandler):
                 def prog(n):
                     with LOCK:
                         task['n_rows'] = n
-                h, n, prev = process_file(in_path, w3, w7, w14, out_path, cols=cols, on_progress=prog)
+                mapp = UPLOADS.get(sid, {}).get('mapping') if sid else None
+                mp = load_mapping(mapp) if mapp else None
+                h, n, prev = process_file(in_path, w3, w7, w14, out_path, cols=cols,
+                                          on_progress=prog, cfg=cfg, mapping=mp)
                 with LOCK:
                     task['status'] = 'done'
                     task['n_rows'] = n
@@ -1222,6 +1350,11 @@ class H(http.server.BaseHTTPRequestHandler):
                     os.unlink(in_path)
                 except OSError:
                     pass
+                if mapp:
+                    try:
+                        os.unlink(mapp)
+                    except OSError:
+                        pass
             except Exception as e:
                 import traceback
                 with LOCK:
@@ -1243,6 +1376,17 @@ def qs_get_list(p, key):
     return urllib.parse.parse_qs(p.query).get(key, [])
 
 
+def _parse_cfg_param(p):
+    """从 query 取 cfg(JSON, URL 编码)。无 cfg→None；非法→False；正常→dict。"""
+    raw = qs_get(p, 'cfg')
+    if not raw:
+        return None
+    try:
+        return json.loads(urllib.parse.unquote(raw))
+    except Exception:
+        return False
+
+
 def run_fba(sid, task):
     try:
         up = UPLOADS.get(sid, {})
@@ -1258,8 +1402,14 @@ def run_fba(sid, task):
             with LOCK:
                 task['n_rows'] = n
 
+        # 运营级别映射表（slot=mapping）→ 备货规则按运营级别算加权日均
+        mapp = up.get('mapping')
+        mp = load_mapping(mapp) if mapp else None
+        cfg = task.get('cfg')
+
         hdr_s, n_s, prev = process_file(sales_p, task['w'][0], task['w'][1], task['w'][2],
-                                         out_sales, cols=task.get('cols'), on_progress=prog)
+                                         out_sales, cols=task.get('cols'), on_progress=prog,
+                                         cfg=cfg, mapping=mp)
         hdr_o, n_o, meet, level_info = process_ops(ops_p, out_sales, out_ops, cols=task.get('cols'), on_progress=prog, levels=task.get('levels'))
         hdr_d, n_d, summary, diff_preview = process_diff(out_ops, fba_p, out_diff, cols=task.get('cols'))
 
@@ -1275,7 +1425,7 @@ def run_fba(sid, task):
             task['level_info'] = level_info
             task['finished'] = time.time()
         # 清理暂存文件
-        for k in ('sales', 'ops', 'fba'):
+        for k in ('sales', 'ops', 'fba', 'mapping'):
             pp = up.get(k)
             if pp:
                 try:

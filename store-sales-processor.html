@@ -96,6 +96,12 @@
   .cfg .field{display:flex;flex-direction:column;gap:4px;}
   .cfg .field small{color:var(--sub);font-size:11px;}
   .weights{grid-template-columns:repeat(3,1fr);}
+  button.mini{padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:600;}
+  .rule-row,.bind-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;
+    background:#f7f9fc;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;}
+  .rule-row .rweights{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--sub);}
+  .rule-row .rweights input{width:60px;}
+  .bind-row select,.rule-row select{font-size:12.5px;}
   .empty{color:var(--sub);font-size:13px;padding:8px 0;}
   .hide{display:none;}
   .note{font-size:12.5px;color:var(--sub);background:#fff8ec;border:1px solid #ffe2ad;
@@ -228,6 +234,45 @@
           <div class="field"><label>三天日均列名</label><input type="text" id="colD3" value="三天日均销量" /></div>
           <div class="field"><label>七天日均列名</label><input type="text" id="colD7" value="七天日均销量" /></div>
           <div class="field"><label>十四天日均列名</label><input type="text" id="colD14" value="十四天日均销量" /></div>
+        </div>
+      </details>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;color:var(--sub);font-size:13px">⚙ 备货规则（按运营级别设置不同加权公式）</summary>
+        <span id="weightedRulesCfg" hidden>1</span>
+        <div class="cfg" style="margin-top:10px">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:600">
+            <input type="checkbox" id="rulesMode" /> 开启：按运营级别绑定不同备货公式（6窗口 / 固定窗口）
+          </label>
+          <div id="rulesCfgBox" style="display:none;margin-top:12px;width:100%">
+            <p class="note" style="margin:0 0 10px">每个运营级别可绑定一条「备货规则」：组合公式（6窗口权重，运行时自动归一化）或固定窗口（直接取某窗口日均）。未绑定的运营级别使用「默认规则」。下端可上传「运营级别映射表」把 店铺+ASIN 关联到运营级别。配置自动存本机，可导出/导入 JSON。开启后 页签②/③ 自动用新加权值——前14天没销量但 30/60/90 天有销量会正确生成需求，其他页签无需改动。</p>
+
+            <div style="font-weight:600;margin:10px 0 6px">备货规则</div>
+            <div id="rulesList"></div>
+            <button type="button" id="addRule" class="mini">+ 新增规则</button>
+
+            <div style="font-weight:600;margin:14px 0 6px">运营级别 → 规则 绑定</div>
+            <div id="bindList"></div>
+            <button type="button" id="addBind" class="mini">+ 新增绑定</button>
+
+            <div class="cfg" style="margin-top:12px">
+              <div class="field"><label>默认规则（未绑定运营级别时）</label><select id="defaultRule"></select></div>
+              <div class="field"><label>默认运营级别（映射表未命中时用）</label><input type="text" id="defaultOpLevel" placeholder="留空=用默认规则" /></div>
+            </div>
+
+            <div style="font-weight:600;margin:14px 0 6px">运营级别映射表（可选）</div>
+            <div class="drop" id="dropMapping">
+              <div class="drop-txt">拖拽 / 点击上传映射表<br><small>列：店铺、ASIN、运营级别（、补货方式 可选）</small></div>
+              <input type="file" id="mappingFile" accept=".xlsx,.xls" hidden />
+            </div>
+            <div class="meta" id="mappingMeta"></div>
+
+            <div class="actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" id="exportCfg" class="mini">导出配置 JSON</button>
+              <button type="button" id="importCfg" class="mini">导入配置 JSON</button>
+              <input type="file" id="importCfgFile" accept=".json" hidden />
+              <button type="button" id="resetCfg" class="mini">恢复截图默认</button>
+            </div>
+          </div>
         </div>
       </details>
       <div class="actions" style="margin-top:18px">
@@ -601,6 +646,180 @@ document.getElementById('savePreset').addEventListener('click', ()=>{
 updateNormReadout();
 
 /* =========================================================
+ * 备货规则（按运营级别）配置 + 运营级别映射表
+ * =======================================================*/
+const LS_RULES = 'amz_weight_rules';
+const WIN_KEYS = [3, 7, 14, 30, 60, 90];
+const DEFAULT_RULES_CFG = {
+  mode: 'rules',
+  rules: [
+    { name: "30天测试", type: "组合", weights: {3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0} },
+    { name: "45天测试", type: "组合", weights: {3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0} },
+    { name: "60天测试日均", type: "固定", fixed_window: 60 },
+  ],
+  bindings: {
+    "新品": "30天测试", "清库存(不补货)": "30天测试",
+    "美国-30天日均-[0~5]": "45天测试", "美国-30天日均-[5~10]": "60天测试日均",
+    "美国-30天日均-[10~20]": "60天测试日均", "美国-30天日均-[20+]": "60天测试日均",
+    "美国-30天日均-[0~0.5]": "45天测试", "美国-30天日均-[0.5~5]": "45天测试",
+    "美国-30天日均-[5~20]": "60天测试日均", "美国-30天日均-[20+]": "60天测试日均",
+    "加拿大-30天日均-[0~0.5]": "45天测试", "加拿大-30天日均-[0.5~20]": "60天测试日均",
+  },
+  default_rule: "30天测试", default_op_level: "",
+};
+let rulesCfg = loadRulesCfg();
+let salesMappingFile = null;
+
+function escAttr(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function loadRulesCfg(){
+  try{
+    const s = localStorage.getItem(LS_RULES);
+    if(s){ const o = JSON.parse(s); if(o && o.rules && o.rules.length) return o; }
+  }catch(e){}
+  return JSON.parse(JSON.stringify(DEFAULT_RULES_CFG));
+}
+function saveRulesCfg(){ try{ localStorage.setItem(LS_RULES, JSON.stringify(rulesCfg)); }catch(e){} }
+
+const rulesModeEl = document.getElementById('rulesMode');
+const rulesCfgBox = document.getElementById('rulesCfgBox');
+const rulesListEl = document.getElementById('rulesList');
+const bindListEl = document.getElementById('bindList');
+const defaultRuleEl = document.getElementById('defaultRule');
+
+function renderDefaultRuleOptions(){
+  const cur = defaultRuleEl.value;
+  defaultRuleEl.innerHTML = '';
+  rulesCfg.rules.forEach(r=>{
+    const o = document.createElement('option');
+    o.value = r.name; o.textContent = r.name;
+    defaultRuleEl.appendChild(o);
+  });
+  defaultRuleEl.value = (rulesCfg.default_rule && rulesCfg.rules.some(r=>r.name===rulesCfg.default_rule)) ? rulesCfg.default_rule : (rulesCfg.rules[0] ? rulesCfg.rules[0].name : '');
+}
+function renderRules(){
+  rulesListEl.innerHTML = '';
+  rulesCfg.rules.forEach((r, idx)=>{
+    const row = document.createElement('div'); row.className = 'rule-row';
+    const typeOpts = `<option value="组合" ${r.type==='组合'?'selected':''}>组合（6窗口权重）</option><option value="固定" ${r.type==='固定'?'selected':''}>固定（单窗口）</option>`;
+    let wHtml;
+    if(r.type === '固定'){
+      wHtml = `固定窗口 <select class="fw">${WIN_KEYS.map(w=>`<option value="${w}" ${r.fixed_window==w?'selected':''}>${w}天</option>`).join('')}</select>`;
+    } else {
+      wHtml = WIN_KEYS.map(w=>`${w}天<input class="rw" data-w="${w}" type="number" step="0.01" value="${((r.weights&&r.weights[w]!=null)?r.weights[w]:0)}">`).join(' ');
+    }
+    row.innerHTML = `<input class="rname" type="text" value="${escAttr(r.name)}" placeholder="规则名" style="width:130px">
+      <select class="rtype">${typeOpts}</select>
+      <span class="rweights">${wHtml}</span>
+      <button type="button" class="mini rdel">删除</button>`;
+    row.querySelector('.rname').addEventListener('input', e=>{ rulesCfg.rules[idx].name = e.target.value; renderDefaultRuleOptions(); saveRulesCfg(); });
+    row.querySelector('.rtype').addEventListener('change', e=>{
+      rulesCfg.rules[idx].type = e.target.value;
+      if(e.target.value==='固定' && rulesCfg.rules[idx].fixed_window==null) rulesCfg.rules[idx].fixed_window = 60;
+      renderRules(); renderDefaultRuleOptions(); saveRulesCfg();
+    });
+    if(r.type==='固定'){
+      row.querySelector('.fw').addEventListener('change', e=>{ rulesCfg.rules[idx].fixed_window = parseInt(e.target.value); saveRulesCfg(); });
+    } else {
+      row.querySelectorAll('.rw').forEach(inp=>{
+        inp.addEventListener('input', e=>{
+          const w = parseInt(inp.dataset.w);
+          if(!rulesCfg.rules[idx].weights) rulesCfg.rules[idx].weights = {};
+          rulesCfg.rules[idx].weights[w] = parseFloat(e.target.value)||0; saveRulesCfg();
+        });
+      });
+    }
+    row.querySelector('.rdel').addEventListener('click', ()=>{ rulesCfg.rules.splice(idx,1); renderRules(); renderDefaultRuleOptions(); saveRulesCfg(); });
+    rulesListEl.appendChild(row);
+  });
+}
+function renderBinds(){
+  bindListEl.innerHTML = '';
+  Object.keys(rulesCfg.bindings).forEach((lv)=>{
+    const row = document.createElement('div'); row.className = 'bind-row';
+    const opts = rulesCfg.rules.map(r=>`<option value="${escAttr(r.name)}" ${rulesCfg.bindings[lv]===r.name?'selected':''}>${escAttr(r.name)}</option>`).join('');
+    row.innerHTML = `<input class="blevel" type="text" value="${escAttr(lv)}" placeholder="运营级别" style="width:220px">
+      <select class="brule">${opts}</select>
+      <button type="button" class="mini bdel">删除</button>`;
+    const capturedOld = lv;
+    row.querySelector('.blevel').addEventListener('input', e=>{
+      const nv = e.target.value; const v = rulesCfg.bindings[capturedOld];
+      delete rulesCfg.bindings[capturedOld]; rulesCfg.bindings[nv] = v; saveRulesCfg();
+    });
+    row.querySelector('.brule').addEventListener('change', e=>{ rulesCfg.bindings[lv] = e.target.value; saveRulesCfg(); });
+    row.querySelector('.bdel').addEventListener('click', ()=>{ delete rulesCfg.bindings[lv]; renderBinds(); saveRulesCfg(); });
+    bindListEl.appendChild(row);
+  });
+}
+function rulesCfgDefaultRule(){ return defaultRuleEl.value || (rulesCfg.rules[0] && rulesCfg.rules[0].name) || ''; }
+function buildRulesCfg(){
+  const cfg = JSON.parse(JSON.stringify(rulesCfg));
+  cfg.mode = 'rules';
+  cfg.rules.forEach(r=>{
+    if(r.type==='组合'){
+      const w = {}; WIN_KEYS.forEach(k=>{ w[k] = parseFloat((r.weights && r.weights[k]!=null)?r.weights[k]:0)||0; });
+      r.weights = w;
+    } else { r.fixed_window = parseInt(r.fixed_window)||30; }
+  });
+  cfg.default_rule = rulesCfgDefaultRule();
+  cfg.default_op_level = (document.getElementById('defaultOpLevel').value||'').trim();
+  return cfg;
+}
+
+rulesModeEl.addEventListener('change', ()=>{ rulesCfgBox.style.display = rulesModeEl.checked ? 'block' : 'none'; });
+defaultRuleEl.addEventListener('change', ()=>{ rulesCfg.default_rule = defaultRuleEl.value; saveRulesCfg(); });
+document.getElementById('defaultOpLevel').addEventListener('input', e=>{ rulesCfg.default_op_level = e.target.value.trim(); saveRulesCfg(); });
+document.getElementById('addRule').addEventListener('click', ()=>{
+  rulesCfg.rules.push({ name:'新规则'+rulesCfg.rules.length, type:'组合', weights:{3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0} });
+  renderRules(); renderDefaultRuleOptions(); saveRulesCfg();
+});
+document.getElementById('addBind').addEventListener('click', ()=>{
+  const rn = rulesCfg.rules[0] ? rulesCfg.rules[0].name : '';
+  rulesCfg.bindings['新运营级别'] = rn; renderBinds(); saveRulesCfg();
+});
+document.getElementById('exportCfg').addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(buildRulesCfg(), null, 2)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '备货规则配置.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+});
+document.getElementById('importCfg').addEventListener('click', ()=>document.getElementById('importCfgFile').click());
+document.getElementById('importCfgFile').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = ()=>{
+    try{
+      const o = JSON.parse(rd.result);
+      if(!o.rules || !o.rules.length) throw new Error('缺少 rules');
+      rulesCfg = o; saveRulesCfg(); renderRules(); renderBinds(); renderDefaultRuleOptions();
+      document.getElementById('defaultOpLevel').value = rulesCfg.default_op_level || '';
+    }catch(err){ alert('导入失败：'+err.message); }
+  };
+  rd.readAsText(f); e.target.value = '';
+});
+document.getElementById('resetCfg').addEventListener('click', ()=>{
+  rulesCfg = JSON.parse(JSON.stringify(DEFAULT_RULES_CFG));
+  saveRulesCfg(); renderRules(); renderBinds(); renderDefaultRuleOptions();
+  document.getElementById('defaultOpLevel').value = rulesCfg.default_op_level || '';
+});
+(function(){
+  const zone = document.getElementById('dropMapping');
+  const input = document.getElementById('mappingFile');
+  zone.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', e=>{ if(e.target.files[0]) onMappingFile(e.target.files[0]); });
+  ['dragover','dragenter'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.add('over');}));
+  ['dragleave','drop'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.remove('over');}));
+  zone.addEventListener('drop', e=>{ const f=e.dataTransfer.files[0]; if(f) onMappingFile(f); });
+})();
+function onMappingFile(file){
+  salesMappingFile = file;
+  const mb = (file.size/1024/1024).toFixed(1);
+  document.getElementById('mappingMeta').innerHTML = `文件名 <b>${escAttr(file.name)}</b> ｜ 大小 <b>${mb} MB</b>`;
+}
+
+renderRules(); renderBinds(); renderDefaultRuleOptions();
+document.getElementById('defaultRule').value = rulesCfg.default_rule || '';
+document.getElementById('defaultOpLevel').value = rulesCfg.default_op_level || '';
+
+/* =========================================================
  * 页签一：开始处理
  * =======================================================*/
 document.getElementById('runBtn').addEventListener('click', ()=>{
@@ -625,6 +844,17 @@ document.getElementById('runBtn').addEventListener('click', ()=>{
 
   (async ()=>{
     try{
+      let sid = '';
+      if(rulesModeEl.checked && salesMappingFile){
+        sid = (crypto.randomUUID ? crypto.randomUUID() : ('s'+Date.now()+Math.random().toString(16).slice(2)));
+        setStatus('<span class="spinner"></span>正在上传运营级别映射表…', 'run');
+        const rm = await fetch(`${API}/api/upload?sid=${enc(sid)}&slot=mapping`, { method:'POST', body: salesMappingFile });
+        if(!rm.ok){ setStatus('⚠ 映射表上传失败：HTTP '+rm.status, 'err'); return; }
+      }
+      if(rulesModeEl.checked){
+        parts.push('cfg='+enc(JSON.stringify(buildRulesCfg())));
+      }
+      if(sid) parts.push('sid='+enc(sid));
       const r = await fetch(API + '/api/tasks?' + parts.join('&'), { method:'POST', body: currentFile });
       if(!r.ok){ setStatus('⚠ 后台返回错误：HTTP '+r.status, 'err'); return; }
       const j = await r.json();
@@ -721,9 +951,12 @@ document.getElementById('fbaRunBtn').addEventListener('click', ()=>{
     try{
       fbaSid = (crypto.randomUUID ? crypto.randomUUID() : ('s'+Date.now()+Math.random().toString(16).slice(2)));
       const slots = [['sales',fbaFiles.sales],['ops',fbaFiles.ops],['fba',fbaFiles.fba]];
+      if(rulesModeEl.checked && salesMappingFile){
+        slots.push(['mapping', salesMappingFile]);
+      }
       let i = 0;
       for(const [slot, file] of slots){
-        setFbaStatus(`<span class="spinner"></span>正在上传第 ${i+1}/3 个文件：<b>${file.name}</b>…`, 'run');
+        setFbaStatus(`<span class="spinner"></span>正在上传第 ${i+1}/${slots.length} 个文件：<b>${file.name}</b>…`, 'run');
         const r = await fetch(`${API}/api/upload?sid=${enc(fbaSid)}&slot=${slot}`, { method:'POST', body: file });
         if(!r.ok){ setFbaStatus('⚠ 上传失败：HTTP '+r.status, 'err'); return; }
         i++;
@@ -731,6 +964,7 @@ document.getElementById('fbaRunBtn').addEventListener('click', ()=>{
       // 触发链式处理
       const parts = ['type=fba','sid='+enc(fbaSid),'w3='+enc(a),'w7='+enc(b),'w14='+enc(c)];
       for(const x of parseFbaLevels()){ parts.push('levels='+enc(x)); }
+      if(rulesModeEl.checked){ parts.push('cfg='+enc(JSON.stringify(buildRulesCfg()))); }
       setFbaStatus('<span class="spinner"></span>三文件已上传，后台正在串联处理（销量→运营级别→差异）…', 'run');
       const r2 = await fetch(`${API}/api/tasks?`+parts.join('&'), { method:'POST' });
       if(!r2.ok){ setFbaStatus('⚠ 后台返回错误：HTTP '+r2.status, 'err'); return; }
