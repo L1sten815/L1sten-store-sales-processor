@@ -102,6 +102,10 @@
   .rule-row .rweights{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--sub);}
   .rule-row .rweights input{width:60px;}
   .bind-row select,.rule-row select{font-size:12.5px;}
+  .bind-row .brule-list{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;}
+  .bind-row .brule-cb{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;cursor:pointer;}
+  .bind-row .brule-cb input{margin:0;}
+  .muted{color:var(--sub);font-size:12.5px;}
   .empty{color:var(--sub);font-size:13px;padding:8px 0;}
   .hide{display:none;}
   .note{font-size:12.5px;color:var(--sub);background:#fff8ec;border:1px solid #ffe2ad;
@@ -250,7 +254,10 @@
             <div id="rulesList"></div>
             <button type="button" id="addRule" class="mini">+ 新增规则</button>
 
-            <div style="font-weight:600;margin:14px 0 6px">运营级别 → 规则 绑定</div>
+            <div style="font-weight:600;margin:14px 0 6px">运营级别 → 规则 绑定（1 对多）</div>
+            <div class="note" style="border-color:#cfe3ff;background:#f3f8ff">
+              一个运营级别可勾选多条规则。处理时该运营级别会按所选<b>每条规则各自的天数</b>展开需求——例如同时勾选「30天测试」与「45天测试」，会生成 1 条 30 天需求 + 1 条 45 天需求，每条的加权日均按对应规则计算。差异比对也按「店铺ASIN + 天数」逐天核对。
+            </div>
             <div id="bindList"></div>
             <button type="button" id="addBind" class="mini">+ 新增绑定</button>
 
@@ -653,20 +660,30 @@ const WIN_KEYS = [3, 7, 14, 30, 60, 90];
 const DEFAULT_RULES_CFG = {
   mode: 'rules',
   rules: [
-    { name: "30天测试", type: "组合", weights: {3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0} },
-    { name: "45天测试", type: "组合", weights: {3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0} },
-    { name: "60天测试日均", type: "固定", fixed_window: 60 },
+    { name: "30天测试", type: "组合", weights: {3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0}, days: 30 },
+    { name: "45天测试", type: "组合", weights: {3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0}, days: 45 },
+    { name: "60天测试日均", type: "固定", fixed_window: 60, days: 60 },
   ],
   bindings: {
-    "新品": "30天测试", "清库存(不补货)": "30天测试",
-    "美国-30天日均-[0~5]": "45天测试", "美国-30天日均-[5~10]": "60天测试日均",
-    "美国-30天日均-[10~20]": "60天测试日均", "美国-30天日均-[20+]": "60天测试日均",
-    "美国-30天日均-[0~0.5]": "45天测试", "美国-30天日均-[0.5~5]": "45天测试",
-    "美国-30天日均-[5~20]": "60天测试日均", "美国-30天日均-[20+]": "60天测试日均",
-    "加拿大-30天日均-[0~0.5]": "45天测试", "加拿大-30天日均-[0.5~20]": "60天测试日均",
+    "新品": ["30天测试"], "清库存(不补货)": ["30天测试"],
+    "美国-30天日均-[0~5]": ["45天测试"], "美国-30天日均-[5~10]": ["60天测试日均"],
+    "美国-30天日均-[10~20]": ["60天测试日均"], "美国-30天日均-[20+]": ["60天测试日均"],
+    "美国-30天日均-[0~0.5]": ["45天测试"], "美国-30天日均-[0.5~5]": ["45天测试"],
+    "美国-30天日均-[5~20]": ["60天测试日均"], "美国-30天日均-[20+]": ["60天测试日均"],
+    "加拿大-30天日均-[0~0.5]": ["45天测试"], "加拿大-30天日均-[0.5~20]": ["60天测试日均"],
   },
   default_rule: "30天测试", default_op_level: "",
 };
+// 前端推导规则「天数」（与后端 _rule_days 保持一致）：显式 days 优先→固定窗=fixed_window→组合窗=权重最大窗口
+function deriveDays(r){
+  if(r == null) return 30;
+  if(typeof r.days === 'number' && r.days > 0) return r.days;
+  if(typeof r.days === 'string' && /^\d+$/.test(r.days.trim())) return parseInt(r.days.trim(), 10);
+  if(r.type === '固定'){ const fw = parseInt(r.fixed_window)||0; return fw > 0 ? fw : 30; }
+  if(r.weights){ const ks = Object.keys(r.weights).map(Number).filter(k=>parseFloat(r.weights[k])>0);
+    if(ks.length) return Math.max.apply(null, ks); }
+  return 30;
+}
 let rulesCfg = loadRulesCfg();
 let salesMappingFile = null;
 
@@ -707,15 +724,17 @@ function renderRules(){
     } else {
       wHtml = WIN_KEYS.map(w=>`${w}天<input class="rw" data-w="${w}" type="number" step="0.01" value="${((r.weights&&r.weights[w]!=null)?r.weights[w]:0)}">`).join(' ');
     }
+    const rdays = (r.days!=null && String(r.days).trim()!=='') ? r.days : deriveDays(r);
     row.innerHTML = `<input class="rname" type="text" value="${escAttr(r.name)}" placeholder="规则名" style="width:130px">
       <select class="rtype">${typeOpts}</select>
       <span class="rweights">${wHtml}</span>
+      需求天数 <input class="rdays" type="number" min="1" step="1" value="${rdays}" style="width:64px" title="生成补货需求的天数窗口；留空则按规则自动推导">
       <button type="button" class="mini rdel">删除</button>`;
     row.querySelector('.rname').addEventListener('input', e=>{ rulesCfg.rules[idx].name = e.target.value; renderDefaultRuleOptions(); saveRulesCfg(); });
     row.querySelector('.rtype').addEventListener('change', e=>{
       rulesCfg.rules[idx].type = e.target.value;
       if(e.target.value==='固定' && rulesCfg.rules[idx].fixed_window==null) rulesCfg.rules[idx].fixed_window = 60;
-      renderRules(); renderDefaultRuleOptions(); saveRulesCfg();
+      renderRules(); renderDefaultRuleOptions(); renderBinds(); saveRulesCfg();
     });
     if(r.type==='固定'){
       row.querySelector('.fw').addEventListener('change', e=>{ rulesCfg.rules[idx].fixed_window = parseInt(e.target.value); saveRulesCfg(); });
@@ -728,7 +747,22 @@ function renderRules(){
         });
       });
     }
-    row.querySelector('.rdel').addEventListener('click', ()=>{ rulesCfg.rules.splice(idx,1); renderRules(); renderDefaultRuleOptions(); saveRulesCfg(); });
+    row.querySelector('.rdays').addEventListener('input', e=>{
+      const v = e.target.value.trim();
+      rulesCfg.rules[idx].days = (v==='') ? null : (parseInt(v,10)||0);
+      saveRulesCfg();
+    });
+    row.querySelector('.rdel').addEventListener('click', ()=>{
+      const rn = rulesCfg.rules[idx].name;
+      rulesCfg.rules.splice(idx,1);
+      // 清理绑定里对被删规则的引用
+      Object.keys(rulesCfg.bindings).forEach(lv=>{
+        const arr = rulesCfg.bindings[lv];
+        if(Array.isArray(arr)){ rulesCfg.bindings[lv] = arr.filter(n=>n!==rn); if(rulesCfg.bindings[lv].length===0) delete rulesCfg.bindings[lv]; }
+        else if(arr===rn){ delete rulesCfg.bindings[lv]; }
+      });
+      renderRules(); renderDefaultRuleOptions(); renderBinds(); saveRulesCfg();
+    });
     rulesListEl.appendChild(row);
   });
 }
@@ -736,16 +770,23 @@ function renderBinds(){
   bindListEl.innerHTML = '';
   Object.keys(rulesCfg.bindings).forEach((lv)=>{
     const row = document.createElement('div'); row.className = 'bind-row';
-    const opts = rulesCfg.rules.map(r=>`<option value="${escAttr(r.name)}" ${rulesCfg.bindings[lv]===r.name?'selected':''}>${escAttr(r.name)}</option>`).join('');
+    // 绑定值规整为数组（兼容旧版字符串绑定）
+    let cur = rulesCfg.bindings[lv];
+    if(!Array.isArray(cur)) cur = (cur!=null && cur!=='') ? [cur] : [];
+    const cbs = rulesCfg.rules.map(r=>`<label class="brule-cb"><input type="checkbox" class="brule" value="${escAttr(r.name)}" ${cur.indexOf(r.name)>=0?'checked':''}> ${escAttr(r.name)}</label>`).join('');
     row.innerHTML = `<input class="blevel" type="text" value="${escAttr(lv)}" placeholder="运营级别" style="width:220px">
-      <select class="brule">${opts}</select>
+      <div class="brule-list">${cbs || '<span class="muted">（无可用规则，请先添加规则）</span>'}</div>
       <button type="button" class="mini bdel">删除</button>`;
     const capturedOld = lv;
     row.querySelector('.blevel').addEventListener('input', e=>{
       const nv = e.target.value; const v = rulesCfg.bindings[capturedOld];
       delete rulesCfg.bindings[capturedOld]; rulesCfg.bindings[nv] = v; saveRulesCfg();
     });
-    row.querySelector('.brule').addEventListener('change', e=>{ rulesCfg.bindings[lv] = e.target.value; saveRulesCfg(); });
+    const sync = ()=>{
+      const sel = Array.prototype.slice.call(row.querySelectorAll('.brule')).filter(x=>x.checked).map(x=>x.value);
+      rulesCfg.bindings[lv] = sel; saveRulesCfg();
+    };
+    row.querySelectorAll('.brule').forEach(cb=>cb.addEventListener('change', sync));
     row.querySelector('.bdel').addEventListener('click', ()=>{ delete rulesCfg.bindings[lv]; renderBinds(); saveRulesCfg(); });
     bindListEl.appendChild(row);
   });
@@ -759,6 +800,16 @@ function buildRulesCfg(){
       const w = {}; WIN_KEYS.forEach(k=>{ w[k] = parseFloat((r.weights && r.weights[k]!=null)?r.weights[k]:0)||0; });
       r.weights = w;
     } else { r.fixed_window = parseInt(r.fixed_window)||30; }
+    // 天数：未显式设置则按规则推导
+    const d = r.days;
+    if(typeof d === 'number' && d > 0) r.days = d;
+    else if(typeof d === 'string' && /^\d+$/.test(d.trim())) r.days = parseInt(d.trim(),10);
+    else r.days = deriveDays(r);
+  });
+  // 绑定规整为数组
+  Object.keys(cfg.bindings).forEach(lv=>{
+    const v = cfg.bindings[lv];
+    cfg.bindings[lv] = Array.isArray(v) ? v.filter(Boolean) : (v!=null && v!=='' ? [v] : []);
   });
   cfg.default_rule = rulesCfgDefaultRule();
   cfg.default_op_level = (document.getElementById('defaultOpLevel').value||'').trim();
@@ -769,12 +820,11 @@ rulesModeEl.addEventListener('change', ()=>{ rulesCfgBox.style.display = rulesMo
 defaultRuleEl.addEventListener('change', ()=>{ rulesCfg.default_rule = defaultRuleEl.value; saveRulesCfg(); });
 document.getElementById('defaultOpLevel').addEventListener('input', e=>{ rulesCfg.default_op_level = e.target.value.trim(); saveRulesCfg(); });
 document.getElementById('addRule').addEventListener('click', ()=>{
-  rulesCfg.rules.push({ name:'新规则'+rulesCfg.rules.length, type:'组合', weights:{3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0} });
-  renderRules(); renderDefaultRuleOptions(); saveRulesCfg();
+  rulesCfg.rules.push({ name:'新规则'+rulesCfg.rules.length, type:'组合', weights:{3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0}, days: deriveDays({type:'组合',weights:{3:0.5,7:0.2,14:0.2,30:0.1}}) });
+  renderRules(); renderDefaultRuleOptions(); renderBinds(); saveRulesCfg();
 });
 document.getElementById('addBind').addEventListener('click', ()=>{
-  const rn = rulesCfg.rules[0] ? rulesCfg.rules[0].name : '';
-  rulesCfg.bindings['新运营级别'] = rn; renderBinds(); saveRulesCfg();
+  rulesCfg.bindings['新运营级别'] = []; renderBinds(); saveRulesCfg();
 });
 document.getElementById('exportCfg').addEventListener('click', ()=>{
   const blob = new Blob([JSON.stringify(buildRulesCfg(), null, 2)], {type:'application/json'});
