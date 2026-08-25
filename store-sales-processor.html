@@ -908,7 +908,11 @@ function poll(){
         clearInterval(pollTimer); pollTimer = null; finishDone(j);
       }else if(j.status === 'error'){
         clearInterval(pollTimer); pollTimer = null;
-        setStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        let msg = '⚠ 处理失败：'+(j.error_msg||'未知错误');
+        if(j.traceback){
+          msg += '<br><details style="margin-top:8px;white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.9"><summary>查看后端详细报错</summary>'+escHtml(j.traceback)+'</details>';
+        }
+        setStatus(msg, 'err');
         document.getElementById('barWrap').style.display = 'none';
       }
     }catch(e){}
@@ -995,12 +999,13 @@ document.getElementById('fbaRunBtn').addEventListener('click', ()=>{
       if(rulesModeEl.checked){ parts.push('cfg='+enc(JSON.stringify(buildRulesCfg()))); }
       setFbaStatus('<span class="spinner"></span>三文件已上传，后台正在串联处理（销量→运营级别→差异）…', 'run');
       const r2 = await fetch(`${API}/api/tasks?`+parts.join('&'), { method:'POST' });
-      if(!r2.ok){ setFbaStatus('⚠ 后台返回错误：HTTP '+r2.status, 'err'); return; }
+      if(!r2.ok){ setFbaStatus('⚠ 后台返回错误：HTTP '+r2.status, 'err'); document.getElementById('fbaBarWrap').style.display='none'; return; }
       const j2 = await r2.json();
       fbaTaskId = j2.id;
       fbaPoll();
     }catch(e){
       setFbaStatus('⚠ 处理失败：'+e.message+'（确认服务已启动？）', 'err');
+      document.getElementById('fbaBarWrap').style.display='none';
     }
   })();
 });
@@ -1026,12 +1031,17 @@ function fbaPoll(){
         clearInterval(fbaPollTimer); fbaPollTimer = null; fbaFinishDone(j);
       }else if(j.status === 'error'){
         clearInterval(fbaPollTimer); fbaPollTimer = null;
-        setFbaStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        let msg = '⚠ 处理失败：'+(j.error_msg||'未知错误');
+        if(j.traceback){
+          msg += '<br><details style="margin-top:8px;white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.9"><summary>查看后端详细报错</summary>'+escHtml(j.traceback)+'</details>';
+        }
+        setFbaStatus(msg, 'err');
         document.getElementById('fbaBarWrap').style.display = 'none';
       }
     }catch(e){}
   }, 1000);
 }
+function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function fbaFinishDone(j){
   document.getElementById('fbaBar').style.width = '100%';

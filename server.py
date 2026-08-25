@@ -1259,7 +1259,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if not t:
                 self._json(404, {'error': 'task not found'})
                 return
-            self._json(200, {
+            res = {
                 'id': tid,
                 'status': t['status'],
                 'filename': t.get('filename'),
@@ -1277,7 +1277,10 @@ class H(http.server.BaseHTTPRequestHandler):
                 'append_types': t.get('append_types'),
                 'created': t.get('created'),
                 'finished': t.get('finished'),
-            })
+            }
+            if t.get('status') == 'error':
+                res['traceback'] = t.get('traceback')
+            self._json(200, res)
             return
         if p.path == '/api/tasks':
             with LOCK:
