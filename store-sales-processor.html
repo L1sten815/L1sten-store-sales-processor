@@ -899,6 +899,13 @@ function poll(){
     if(!taskId) return;
     try{
       const r = await fetch(API + '/api/tasks/' + taskId, {cache:'no-store'});
+      if(!r.ok){
+        if(r.status === 429) return; // 被限流，下一轮再试
+        clearInterval(pollTimer); pollTimer = null;
+        setStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        document.getElementById('barWrap').style.display = 'none';
+        return;
+      }
       const j = await r.json();
       if(j.status === 'running'){
         const n = j.n_rows || 0;
@@ -916,7 +923,7 @@ function poll(){
         document.getElementById('barWrap').style.display = 'none';
       }
     }catch(e){}
-  }, 1000);
+  }, 5000);
 }
 function finishDone(j){
   document.getElementById('bar').style.width = '100%';
@@ -1022,6 +1029,13 @@ function fbaPoll(){
     if(!fbaTaskId) return;
     try{
       const r = await fetch(API + '/api/tasks/' + fbaTaskId, {cache:'no-store'});
+      if(!r.ok){
+        if(r.status === 429) return;
+        clearInterval(fbaPollTimer); fbaPollTimer = null;
+        setFbaStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        document.getElementById('fbaBarWrap').style.display = 'none';
+        return;
+      }
       const j = await r.json();
       if(j.status === 'running'){
         const n = j.n_rows || 0;
@@ -1039,7 +1053,7 @@ function fbaPoll(){
         document.getElementById('fbaBarWrap').style.display = 'none';
       }
     }catch(e){}
-  }, 1000);
+  }, 5000);
 }
 function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -1200,8 +1214,12 @@ document.getElementById('euDetailBtn').addEventListener('click', ()=>{
       const j2 = await r2.json();
       const poll = async ()=>{
         const r3 = await fetch(`${API}/api/tasks/${j2.id}`);
+        if(!r3.ok){
+          if(r3.status === 429){ setTimeout(poll, 5000); return; }
+          setEuStatus('⚠ 查询状态失败：HTTP '+r3.status, 'err'); return;
+        }
         const j3 = await r3.json();
-        if(j3.status === 'running'){ setTimeout(poll, 1500); return; }
+        if(j3.status === 'running'){ setTimeout(poll, 5000); return; }
         if(j3.status === 'error'){ setEuStatus('⚠ 生成失败：'+(j3.error_msg||''), 'err'); return; }
         const s = j3.summary || {};
         setEuStatus(`✅ 已生成：不一致 <b>${s.mismatch||0}</b> 条，逐MSKU明细 <b>${s.detail_rows||0}</b> 行。点击右下角按钮下载。`, 'ok');
@@ -1227,6 +1245,13 @@ function euPoll(){
     if(!euTaskId) return;
     try{
       const r = await fetch(API + '/api/tasks/' + euTaskId, {cache:'no-store'});
+      if(!r.ok){
+        if(r.status === 429) return;
+        clearInterval(euPollTimer); euPollTimer = null;
+        setEuStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        document.getElementById('euBarWrap').style.display = 'none';
+        return;
+      }
       const j = await r.json();
       if(j.status === 'running'){
         const n = j.n_rows || 0;
@@ -1236,11 +1261,15 @@ function euPoll(){
         clearInterval(euPollTimer); euPollTimer = null; euFinishDone(j);
       }else if(j.status === 'error'){
         clearInterval(euPollTimer); euPollTimer = null;
-        setEuStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        let msg = '⚠ 处理失败：'+(j.error_msg||'未知错误');
+        if(j.traceback){
+          msg += '<br><details style="margin-top:8px;white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.9"><summary>查看后端详细报错</summary>'+escHtml(j.traceback)+'</details>';
+        }
+        setEuStatus(msg, 'err');
         document.getElementById('euBarWrap').style.display = 'none';
       }
     }catch(e){}
-  }, 1000);
+  }, 5000);
 }
 function euFinishDone(j){
   document.getElementById('euBar').style.width = '100%';
@@ -1342,6 +1371,13 @@ function allocPoll(){
     if(!allocTaskId) return;
     try{
       const r = await fetch(API + '/api/tasks/' + allocTaskId, {cache:'no-store'});
+      if(!r.ok){
+        if(r.status === 429) return;
+        clearInterval(allocPollTimer); allocPollTimer = null;
+        setAllocStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        document.getElementById('allocBarWrap').style.display = 'none';
+        return;
+      }
       const j = await r.json();
       if(j.status === 'running'){
         const n = j.n_rows || 0;
@@ -1351,11 +1387,15 @@ function allocPoll(){
         clearInterval(allocPollTimer); allocPollTimer = null; allocFinishDone(j);
       }else if(j.status === 'error'){
         clearInterval(allocPollTimer); allocPollTimer = null;
-        setAllocStatus('⚠ 处理失败：'+(j.error_msg||'未知错误'), 'err');
+        let msg = '⚠ 处理失败：'+(j.error_msg||'未知错误');
+        if(j.traceback){
+          msg += '<br><details style="margin-top:8px;white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.9"><summary>查看后端详细报错</summary>'+escHtml(j.traceback)+'</details>';
+        }
+        setAllocStatus(msg, 'err');
         document.getElementById('allocBarWrap').style.display = 'none';
       }
     }catch(e){}
-  }, 1000);
+  }, 5000);
 }
 function allocFinishDone(j){
   document.getElementById('allocBar').style.width = '100%';
