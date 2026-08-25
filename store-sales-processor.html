@@ -30,9 +30,25 @@
     font-size:22px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25);}
   header h1{margin:0;font-size:19px;font-weight:700;letter-spacing:.3px;}
   header p{margin:3px 0 0;color:rgba(255,255,255,.82);font-size:13px;}
+  /* ---- L1sten 品牌 + uiverse 风格装饰 loader ---- */
+  .head-brand{margin-left:auto;display:flex;align-items:center;gap:9px;
+    font-weight:800;font-size:18px;letter-spacing:.6px;color:#fff;white-space:nowrap;
+    padding:7px 16px;border-radius:999px;background:rgba(255,255,255,.16);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.30);}
+  .head-brand::before{content:'';width:9px;height:9px;border-radius:50%;
+    background:#5eead4;box-shadow:0 0 0 4px rgba(94,234,212,.28);}
+  .brand-loader{display:inline-flex;gap:6px;align-items:center;}
+  .brand-loader span{width:10px;height:10px;border-radius:50%;
+    background:linear-gradient(120deg,var(--brand),var(--brand-2));
+    animation:brand-bounce .55s infinite alternate ease-in-out;}
+  .brand-loader span:nth-child(2){animation-delay:.18s;background:linear-gradient(120deg,#5eead4,#4f9bfc);}
+  .brand-loader span:nth-child(3){animation-delay:.36s;background:linear-gradient(120deg,#a855f7,#7c5cfc);}
+  @keyframes brand-bounce{from{transform:translateY(0);opacity:.7;}to{transform:translateY(-9px);opacity:1;}}
   main{padding:22px 24px 40px;max-width:1120px;margin:0 auto;}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;
-    margin-bottom:18px;box-shadow:var(--shadow);}
+    margin-bottom:18px;box-shadow:var(--shadow);animation:cardIn .45s ease both;}
+  @keyframes cardIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  @media (prefers-reduced-motion: reduce){.card{animation:none;}.brand-loader span{animation:none;}}
   .card h2{margin:0 0 14px;font-size:15px;font-weight:700;display:flex;align-items:center;color:var(--ink);}
   .card h2::before{content:'';width:4px;height:17px;border-radius:3px;margin-right:11px;
     background:linear-gradient(180deg,var(--brand),var(--brand-2));}
@@ -54,6 +70,8 @@
     box-shadow:0 5px 14px rgba(59,91,219,.28);}
   button.primary:hover{filter:brightness(1.06);color:#fff;transform:translateY(-1px);}
   button:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
+  button:active:not(:disabled){transform:translateY(1px) scale(.98);}
+  button.primary:active:not(:disabled){transform:translateY(1px) scale(.99);}
   button.big{padding:13px 18px;font-size:14px;font-weight:700;}
   .actions{margin-top:18px;}
   .actions button.big{width:100%;}
@@ -137,7 +155,8 @@
   tr.row-eu-noneu td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
   tr.row-warn td:first-child{box-shadow:inset 3px 0 0 var(--warn);}
 
-  .foot{text-align:center;color:var(--sub);font-size:12px;margin-top:8px;}
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:14px;
+    text-align:left;color:var(--sub);font-size:12px;margin-top:8px;flex-wrap:wrap;}
 </style>
 </head>
 <body>
@@ -147,6 +166,7 @@
     <h1>店铺销量数据处理工具</h1>
     <p>上传原始 Excel → 后台解析转换 → 完成后下载结果（大文件不再经浏览器直接解析）</p>
   </div>
+  <div class="head-brand">L1sten</div>
 </header>
 
 <main>
@@ -397,7 +417,10 @@
     </section>
   </div>
 
-  <footer class="foot">店铺销量数据处理工具 · 文件由后台解析，结果可直接下载</footer></main>
+  <footer class="foot">
+    <span>店铺销量数据处理工具 · 文件由后台解析，结果可直接下载</span>
+    <span class="brand-loader" aria-hidden="true" title="L1sten"><span></span><span></span><span></span></span>
+  </footer></main>
 
 <script>
 /* =========================================================
