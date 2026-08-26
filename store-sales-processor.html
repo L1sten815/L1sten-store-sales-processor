@@ -339,8 +339,9 @@
         差异按 <b>店铺ASIN</b> 比对：<span class="st-both">已生成</span>（两侧都有）／<span class="st-miss">缺失</span>（运营满足但需求未生成）／<span class="st-extra">多余</span>（需求有但运营不满足条件）。
         <b>加权计算口径：</b>若页签①<b>未开启</b>备货规则，运营级别文件里的「销量」列沿用页签①的 3天/7天/14天 权重；若页签①<b>开启</b>了备货规则，则按各运营级别在页签①里绑定的规则分别计算。下方「符合补货条件的运营级别」仅在<b>未开启</b>备货规则时起筛选作用；开启备货规则后，以页签①里已绑定的运营级别为准。</div>
       <div style="margin-top:12px">
-        <div style="font-size:13px;color:#555;margin-bottom:4px">符合补货条件的运营级别（未开启备货规则时生效；可填多个，逗号 / 空格 / 换行 / 顿号分隔；<b>留空 = 不按运营级别筛选，所有级别都参与</b>）</div>
+        <div style="font-size:13px;color:#555;margin-bottom:4px">符合补货条件的运营级别（<b>未开启</b>备货规则时生效；可填多个，逗号 / 空格 / 换行 / 顿号分隔；<b>留空 = 不按运营级别筛选，所有级别都参与</b>）</div>
         <textarea id="fbaLevels" rows="2" placeholder="例如：六块, 其他, 大件" style="width:100%;max-width:560px;resize:vertical;"></textarea>
+        <div id="fbaLevelsHint" style="font-size:12px;color:#c0392b;margin-top:4px;display:none">已开启备货规则：此项不生效，运营级别由「运营级别文件」中的「运营级别」列决定。</div>
       </div>
       <div class="actions" style="margin-top:16px">
         <button class="primary big" id="fbaRunBtn" disabled>开始处理（三表合一）</button>
@@ -804,7 +805,20 @@ function buildRulesCfg(){
   return cfg;
 }
 
-rulesModeEl.addEventListener('change', ()=>{ rulesCfgBox.style.display = rulesModeEl.checked ? 'block' : 'none'; });
+rulesModeEl.addEventListener('change', ()=>{
+  rulesCfgBox.style.display = rulesModeEl.checked ? 'block' : 'none';
+  const hint = document.getElementById('fbaLevelsHint');
+  const ta = document.getElementById('fbaLevels');
+  if(rulesModeEl.checked){
+    hint.style.display = 'block';
+    ta.disabled = true;
+    ta.style.opacity = '.5';
+  }else{
+    hint.style.display = 'none';
+    ta.disabled = false;
+    ta.style.opacity = '1';
+  }
+});
 document.getElementById('addRule').addEventListener('click', ()=>{
   rulesCfg.rules.push({ name:'新规则'+rulesCfg.rules.length, type:'组合', weights:{3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0}, days: deriveDays({type:'组合',weights:{3:0.5,7:0.2,14:0.2,30:0.1}}) });
   renderRules(); renderBinds(); saveRulesCfg();
@@ -1096,11 +1110,18 @@ function fbaFinishDone(j){
   ];
   sg.innerHTML = cards.map(c=>`<div class="stat ${c.cls}"><div class="k">${c.k}</div><div class="v">${(c.v||0).toLocaleString()}</div></div>`).join('');
   document.getElementById('fbaSummaryCard').style.display = 'block';
-  // 已应用的运营级别筛选 + 文件中可选值提示
+  // 已应用的运营级别筛选 / 规则绑定提示
+  const mode = (j.level_info && j.level_info.mode) ? j.level_info.mode : 'legacy';
   const lv = parseFbaLevels();
   const di = (j.level_info && j.level_info.distinct) ? j.level_info.distinct : [];
+  const allowed = (j.level_info && j.level_info.allowed) ? j.level_info.allowed : [];
   let meta;
-  if(lv.length){
+  if(mode === 'rules'){
+    const notBound = di.filter(x => allowed.indexOf(x) < 0);
+    meta = '已开启备货规则：按页签①绑定的运营级别计算：<b>'+(allowed.length ? esc(allowed.join('、')) : '无')+'</b>'
+      + (di.length ? ' ｜ 文件中出现的运营级别：<b>'+esc(di.join('、'))+'</b>' : '')
+      + (notBound.length ? ' ｜ <span style="color:#c0392b">以下级别未在页签①绑定规则：'+esc(notBound.join('、'))+'</span>' : '');
+  } else if(lv.length){
     const missing = lv.filter(x => di.indexOf(x) < 0);
     meta = '已按运营级别筛选（符合补货条件）：<b>'+esc(lv.join('、'))+'</b>'
       + (missing.length ? ' ｜ <span style="color:#c0392b">注意：以下填入值未在文件中出现（可能拼写不符）：'+esc(missing.join('、'))+'</span>' : '');
@@ -1464,6 +1485,15 @@ function renderAllocPreview(header, rows){
   t.innerHTML = head + body;
 }
 
+(function initFbaLevelsState(){
+  const hint = document.getElementById('fbaLevelsHint');
+  const ta = document.getElementById('fbaLevels');
+  if(rulesModeEl.checked){
+    hint.style.display = 'block';
+    ta.disabled = true;
+    ta.style.opacity = '.5';
+  }
+})();
 detectMode();
 </script>
 </body>

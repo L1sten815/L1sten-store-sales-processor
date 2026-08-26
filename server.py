@@ -562,7 +562,13 @@ def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progr
                 continue
 
             # ---- rules 模式：按绑定规则逐条展开 ----
-            op_level = (mapping.get(a) or (default_op_level, ''))[0] if mapping else default_op_level
+            # 优先取运营级别文件自身的「运营级别」列；为空则 fallback 到映射表；再空则 fallback 到 default_op_level
+            if level_val:
+                op_level = level_val
+            elif mapping:
+                op_level = (mapping.get(a) or (default_op_level, ''))[0]
+            else:
+                op_level = default_op_level
             rules_list = lookup.get(op_level)   # list 或 None
             status_ok = (str(r[i_status]).strip() == '正常销售') if i_status >= 0 else True
             dtype_ok = (str(r[i_dtype]).strip() == 'FBA') if i_dtype >= 0 else True
@@ -619,7 +625,7 @@ def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progr
         pass
     if on_progress:
         on_progress(n)
-    level_info = {'distinct': sorted(distinct_levels), 'allowed': sorted(allowed)}
+    level_info = {'distinct': sorted(distinct_levels), 'allowed': sorted(allowed), 'mode': 'rules' if use_rules else 'legacy'}
     return out_header, n, meet, level_info
 
 
