@@ -805,7 +805,8 @@ function buildRulesCfg(){
   return cfg;
 }
 
-rulesModeEl.addEventListener('change', ()=>{
+const LS_RULES_MODE = 'amz_rules_mode_enabled';
+function applyRulesModeUI(){
   rulesCfgBox.style.display = rulesModeEl.checked ? 'block' : 'none';
   const hint = document.getElementById('fbaLevelsHint');
   const ta = document.getElementById('fbaLevels');
@@ -818,7 +819,9 @@ rulesModeEl.addEventListener('change', ()=>{
     ta.disabled = false;
     ta.style.opacity = '1';
   }
-});
+}
+function saveRulesModeState(){ try{ localStorage.setItem(LS_RULES_MODE, rulesModeEl.checked ? '1' : '0'); }catch(e){} }
+rulesModeEl.addEventListener('change', ()=>{ applyRulesModeUI(); saveRulesModeState(); });
 document.getElementById('addRule').addEventListener('click', ()=>{
   rulesCfg.rules.push({ name:'新规则'+rulesCfg.rules.length, type:'组合', weights:{3:0.5,7:0.2,14:0.2,30:0.1,60:0,90:0}, days: deriveDays({type:'组合',weights:{3:0.5,7:0.2,14:0.2,30:0.1}}) });
   renderRules(); renderBinds(); saveRulesCfg();
@@ -840,6 +843,8 @@ document.getElementById('importCfgFile').addEventListener('change', e=>{
       const o = JSON.parse(rd.result);
       if(!o.rules || !o.rules.length) throw new Error('缺少 rules');
       rulesCfg = o; saveRulesCfg(); renderRules(); renderBinds();
+      // 导入的若是 rules 配置，自动开启备货规则开关
+      if(o.mode === 'rules'){ rulesModeEl.checked = true; saveRulesModeState(); applyRulesModeUI(); }
     }catch(err){ alert('导入失败：'+err.message); }
   };
   rd.readAsText(f); e.target.value = '';
@@ -1485,14 +1490,17 @@ function renderAllocPreview(header, rows){
   t.innerHTML = head + body;
 }
 
-(function initFbaLevelsState(){
-  const hint = document.getElementById('fbaLevelsHint');
-  const ta = document.getElementById('fbaLevels');
-  if(rulesModeEl.checked){
-    hint.style.display = 'block';
-    ta.disabled = true;
-    ta.style.opacity = '.5';
-  }
+(function initRulesModeState(){
+  try{
+    const saved = localStorage.getItem(LS_RULES_MODE);
+    if(saved === '1') rulesModeEl.checked = true;
+    else if(saved === '0') rulesModeEl.checked = false;
+    // 没有保存过时，若本地已有规则配置且包含绑定，则默认开启（避免用户以为配了规则却没生效）
+    else if(rulesCfg && rulesCfg.mode === 'rules' && rulesCfg.bindings && Object.keys(rulesCfg.bindings).length){
+      rulesModeEl.checked = true;
+    }
+  }catch(e){}
+  applyRulesModeUI();
 })();
 detectMode();
 </script>
