@@ -391,10 +391,8 @@ def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progr
     sales_6win = {}
     # legacy 加权汇总
     sales_weighted = {}
-    # rules 模式：{店铺ASIN: {rule_name: 加权销量累计}}
-    sales_sums = {}
 
-    # rules 模式预编译
+    # rules 模式预编译：plan 直接按窗口编号存储，不再依赖销量表列下标
     rule_plans = {}; lookup = {}; default_rule_name = ''; default_op_level = ''
     if use_rules:
         rules_by_name, lookup = _build_rule_lookup(cfg)
@@ -404,36 +402,20 @@ def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progr
         def plan_for(rule):
             if rule.get('type') == '固定':
                 fw = int(rule.get('fixed_window') or 0)
-                return ('fixed', win_idx.get(fw, -1) if fw in WIN_COLS else -1, _rule_days(rule))
+                return ('fixed', fw, _rule_days(rule))
             w = {int(k): float(v) for k, v in (rule.get('weights') or {}).items()}
-            terms = []
-            for win, wt in w.items():
-                ci = win_idx.get(win, -1) if win in WIN_COLS else -1
-                if ci >= 0:
-                    terms.append((wt, ci))
             wsum = sum(w.values()) or 1.0
-            return ('combo', terms, wsum, _rule_days(rule))
+            return ('combo', w, wsum, _rule_days(rule))
         rule_plans = {name: plan_for(r) for name, r in rules_by_name.items()}
 
-        # 用映射表先确定每个 ASIN 对应的运营级别，只计算该级别绑定的规则
-        asin_level = {}
-        if mapping:
-            for a_key, ent in mapping.items():
-                lv = ent[0] if ent else ''
-                if not lv:
-                    lv = default_op_level
-                asin_level[a_key] = lv
-
-    def rule_m(plan, row):
-        if plan[0] == '固定' or (plan[0] == 'fixed'):
-            ci = plan[1]
-            return fnum(row[ci]) if (0 <= ci < len(row)) else 0.0
-        terms = plan[1]
-        wsum = plan[2]
+    def rule_value(plan, win_vals):
+        """根据 6 窗口汇总值计算某条规则的加权销量。"""
+        if plan[0] == 'fixed':
+            return win_vals.get(plan[1], 0.0)
+        weights, wsum = plan[1], plan[2]
         val = 0.0
-        for wt, ci in terms:
-            if 0 <= ci < len(row):
-                val += wt * fnum(row[ci])
+        for win, wt in weights.items():
+            val += wt * win_vals.get(win, 0.0)
         return val / wsum
 
     for r in sit:
@@ -456,17 +438,6 @@ def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progr
         if not use_rules:
             m = (w3 * fnum(r[win_idx[3]]) + w7 * fnum(r[win_idx[7]]) + w14 * fnum(r[win_idx[14]])) / WSUM
             sales_weighted[a] = sales_weighted.get(a, 0.0) + m
-        else:
-            level = asin_level.get(a, default_op_level)
-            rules_for_level = lookup.get(level)
-            if rules_for_level:
-                ss = sales_sums.get(a)
-                if ss is None:
-                    ss = {}
-                    sales_sums[a] = ss
-                for rule in rules_for_level:
-                    rn = rule['name']
-                    ss[rn] = ss.get(rn, 0.0) + rule_m(rule_plans[rn], r)
 
     # 2) 读运营级别
     oh, oit = _calamine_rows(in_ops) if _try_calamine(in_ops) else _openpyxl_rows(in_ops)
@@ -586,8 +557,8 @@ def process_ops(in_ops, in_sales_raw, out_path, w3, w7, w14, cols=None, on_progr
                 continue
             for rule in rules_list:
                 plan = rule_plans[rule['name']]
-                days = plan[2] if plan[0] == 'fixed' else plan[3]
-                M_rule = sales_sums.get(a, {}).get(rule['name'], 0.0)
+                days = plan[-1]
+                M_rule = rule_value(plan, win_vals)
                 M_rule = round(M_rule * 10000) / 10000
                 m_ok = M_rule > 0
                 if status_ok and dtype_ok and m_ok:
