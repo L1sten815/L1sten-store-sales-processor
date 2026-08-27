@@ -18,7 +18,7 @@ import openpyxl
 HERE = os.path.dirname(os.path.abspath(__file__))
 # 端口：优先读环境变量 $PORT（云平台的标配），其次命令行参数，最后默认 8000
 PORT = int(os.environ.get('PORT', sys.argv[1] if len(sys.argv) > 1 else 8000))
-DEF = (0.6, 0.3, 0.1)
+DEF = (0.3, 0.5, 0.2)
 # 销量处理列名默认（可经前端高级配置覆盖）
 DEF_COLS = {'store': '店铺', 'asin': 'ASIN', 'd3': '三天日均销量', 'd7': '七天日均销量', 'd14': '十四天日均销量'}
 # 运营级别处理列名默认

@@ -214,7 +214,7 @@
       <div class="row" style="margin-bottom:8px">
         <label>预设：</label>
         <select id="presetSel">
-          <option value="default" selected>默认 60% / 30% / 10%</option>
+          <option value="default" selected>默认 30% / 50% / 20%</option>
           <option value="recent">偏高近期 70% / 20% / 10%</option>
           <option value="balanced">均衡 33.3% / 33.3% / 33.3%</option>
           <option value="custom">自定义…</option>
@@ -222,13 +222,13 @@
         <button id="savePreset">保存当前为自定义预设</button>
       </div>
       <div class="cfg weights">
-        <div class="field"><label>3天日均 占比(%)</label><input type="number" id="w3" value="60" step="1" min="0" /></div>
-        <div class="field"><label>7天日均 占比(%)</label><input type="number" id="w7" value="30" step="1" min="0" /></div>
-        <div class="field"><label>14天日均 占比(%)</label><input type="number" id="w14" value="10" step="1" min="0" /></div>
+        <div class="field"><label>3天日均 占比(%)</label><input type="number" id="w3" value="30" step="1" min="0" /></div>
+        <div class="field"><label>7天日均 占比(%)</label><input type="number" id="w7" value="50" step="1" min="0" /></div>
+        <div class="field"><label>14天日均 占比(%)</label><input type="number" id="w14" value="20" step="1" min="0" /></div>
       </div>
       <div class="meta" id="normReadout"></div>
       <div class="note">公式：日均销量(加权) = (w3×三天日均 + w7×七天日均 + w14×十四天日均) ÷ (w3+w7+w14)。
-        输入任意占比，自动按总和归一化；默认 60/30/10 与你的快照样本完全吻合（误差为 0）。
+        输入任意占比，自动按总和归一化；默认 30/50/20。
         自定义预设保存在本机浏览器，下次打开可直接选用。此权重同样用于页签②的销量结果计算。</div>
       <details style="margin-top:14px">
         <summary style="cursor:pointer;color:var(--sub);font-size:13px">⚙ 高级：列名映射（一般不用改；列名与你的文件不一致时再填）</summary>
@@ -583,7 +583,7 @@ function onFile(file){
 /* =========================================================
  * 加权占比预设 + 自定义保存 + 实时归一化显示
  * =======================================================*/
-const PRESETS = { default:[60,30,10], recent:[70,20,10], balanced:[33.3,33.3,33.3] };
+const PRESETS = { default:[30,50,20], recent:[70,20,10], balanced:[33.3,33.3,33.3] };
 const presetSel = document.getElementById('presetSel');
 const w3El = document.getElementById('w3');
 const w7El = document.getElementById('w7');

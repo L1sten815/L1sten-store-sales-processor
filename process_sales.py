@@ -6,9 +6,9 @@
   - 读取：calamine（Rust 解析，惰性迭代，远快于 openpyxl）
   - 写入：自研流式 inline-string XLSX 写器（不经共享字符串表，内存低、速度快）
 用法：
-  python process_sales.py                        # 用默认权重 0.6/0.3/0.1 与内置路径
+  python process_sales.py                        # 用默认权重 0.3/0.5/0.2 与内置路径
   python process_sales.py 输入.xlsx 输出.xlsx   # 指定输入输出
-  python process_sales.py 输入.xlsx 输出.xlsx 0.6 0.3 0.1   # 指定权重
+  python process_sales.py 输入.xlsx 输出.xlsx 0.3 0.5 0.2   # 指定权重
 """
 import os, sys, time
 
