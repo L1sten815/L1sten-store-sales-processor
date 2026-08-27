@@ -919,7 +919,9 @@ function poll(){
       if(!r.ok){
         if(r.status === 429) return; // 被限流，下一轮再试
         clearInterval(pollTimer); pollTimer = null;
-        setStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        let msg = '⚠ 查询状态失败：HTTP '+r.status;
+        if(r.status === 404){ try{ const e = await r.json(); if(e && e.error){ msg = '⚠ '+e.error+'：服务端可能已重启/重新部署，内存中的任务已清空，请刷新页面后重新运行。'; } }catch(_){} }
+        setStatus(msg, 'err');
         document.getElementById('barWrap').style.display = 'none';
         return;
       }
@@ -1060,7 +1062,9 @@ function fbaPoll(){
       if(!r.ok){
         if(r.status === 429) return;
         clearInterval(fbaPollTimer); fbaPollTimer = null;
-        setFbaStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        let msg = '⚠ 查询状态失败：HTTP '+r.status;
+        if(r.status === 404){ try{ const e = await r.json(); if(e && e.error){ msg = '⚠ '+e.error+'：服务端可能已重启/重新部署，内存中的任务已清空，请刷新页面后重新运行。'; } }catch(_){} }
+        setFbaStatus(msg, 'err');
         document.getElementById('fbaBarWrap').style.display = 'none';
         return;
       }
@@ -1217,7 +1221,9 @@ function invPoll(){
       if(!r.ok){
         if(r.status === 429) return;
         clearInterval(invPollTimer); invPollTimer = null;
-        setInvStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        let msg = '⚠ 查询状态失败：HTTP '+r.status;
+        if(r.status === 404){ try{ const e = await r.json(); if(e && e.error){ msg = '⚠ '+e.error+'：服务端可能已重启/重新部署，内存中的任务已清空，请刷新页面后重新运行。'; } }catch(_){} }
+        setInvStatus(msg, 'err');
         document.getElementById('invBarWrap').style.display = 'none';
         return;
       }
@@ -1342,7 +1348,9 @@ function allocPoll(){
       if(!r.ok){
         if(r.status === 429) return;
         clearInterval(allocPollTimer); allocPollTimer = null;
-        setAllocStatus('⚠ 查询状态失败：HTTP '+r.status, 'err');
+        let msg = '⚠ 查询状态失败：HTTP '+r.status;
+        if(r.status === 404){ try{ const e = await r.json(); if(e && e.error){ msg = '⚠ '+e.error+'：服务端可能已重启/重新部署，内存中的任务已清空，请刷新页面后重新运行。'; } }catch(_){} }
+        setAllocStatus(msg, 'err');
         document.getElementById('allocBarWrap').style.display = 'none';
         return;
       }
